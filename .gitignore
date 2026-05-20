@@ -41,3 +41,8 @@ yarn-error.log*
 next-env.d.ts
 .sixth/
 .github/
+
+.vscode/
+AGENTS.md
+CLAUDE.md
+COPILOT_INSTRUCTIONS.md
