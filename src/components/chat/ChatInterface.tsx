@@ -76,7 +76,9 @@ export function ChatInterface() {
     () => buildTransport(address, sessionId),
     [address, sessionId],
   );
-  const { messages, sendMessage, status, error, regenerate } = useChat({ transport });
+  const { messages, sendMessage, status, error, regenerate } = useChat({
+    transport,
+  });
 
   const [input, setInput] = useState("");
   const [showRetry, setShowRetry] = useState(false);
@@ -94,19 +96,24 @@ export function ChatInterface() {
 
   const isLoading = status === "streaming" || status === "submitted";
   const isStreaming = status === "streaming";
-  const lastIsUser = messages.length > 0 && messages[messages.length - 1].role === "user";
+  const lastIsUser =
+    messages.length > 0 && messages[messages.length - 1].role === "user";
   const showThinking = status === "submitted" && lastIsUser;
 
   // ── Smart auto-scroll: only if user is near bottom ──
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    isNearBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 120;
   }, []);
 
   useEffect(() => {
     if (isNearBottomRef.current) {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+      scrollRef.current?.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: "smooth",
+      });
     }
   }, [messages, showThinking]);
 
@@ -128,14 +135,17 @@ export function ChatInterface() {
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 36), 160)}px`;
   }, [input]);
 
-  const handleSubmit = useCallback(async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!input.trim() || isWrongNetwork || isLoading) return;
-    const text = input;
-    setInput("");
-    isNearBottomRef.current = true;
-    await sendMessage({ text });
-  }, [input, isWrongNetwork, isLoading, sendMessage]);
+  const handleSubmit = useCallback(
+    async (e?: React.FormEvent) => {
+      e?.preventDefault();
+      if (!input.trim() || isWrongNetwork || isLoading) return;
+      const text = input;
+      setInput("");
+      isNearBottomRef.current = true;
+      await sendMessage({ text });
+    },
+    [input, isWrongNetwork, isLoading, sendMessage],
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -216,7 +226,9 @@ export function ChatInterface() {
   const handleTxConfirmed = useCallback(
     async (hash: string) => {
       if (pendingProposal) {
-        setDismissedProposals((s) => new Set(s).add(pendingProposal.idempotencyKey));
+        setDismissedProposals((s) =>
+          new Set(s).add(pendingProposal.idempotencyKey),
+        );
       }
       // Show pending state immediately
       await sendMessage({
@@ -234,7 +246,9 @@ export function ChatInterface() {
           {/* Empty state */}
           {!hasMessages && (
             <div className="empty-state animate-fade-in">
-              <div className="empty-state-title">How can I help with your wallet?</div>
+              <div className="empty-state-title">
+                How can I help with your wallet?
+              </div>
               <div className="empty-state-sub">
                 {isConnected
                   ? `${address?.slice(0, 6)}…${address?.slice(-4)} · Sepolia`
@@ -245,16 +259,17 @@ export function ChatInterface() {
 
           {/* Messages */}
           {messages.map((m, idx) => {
-            const isLastAssistant = m.role === "assistant" && idx === messages.length - 1;
+            const isLastAssistant =
+              m.role === "assistant" && idx === messages.length - 1;
             const textContent = m.parts
-              .filter(p => p.type === "text")
-              .map(p => (p as { type: "text"; text: string }).text)
+              .filter((p) => p.type === "text")
+              .map((p) => (p as { type: "text"; text: string }).text)
               .join("");
 
             // Collect tool parts (AI SDK v6: type is `tool-${name}` or `dynamic-tool`)
-            const toolParts = (m.parts.filter(
-              p => p.type.startsWith("tool-") || p.type === "dynamic-tool"
-            ) as unknown[]) as ToolUIPart[];
+            const toolParts = m.parts.filter(
+              (p) => p.type.startsWith("tool-") || p.type === "dynamic-tool",
+            ) as unknown[] as ToolUIPart[];
 
             if (m.role === "user") {
               return (
@@ -293,11 +308,26 @@ export function ChatInterface() {
             <div className="msg-row assistant">
               <button
                 className="retry-btn"
-                onClick={() => { retriedRef.current = false; setShowRetry(false); regenerate(); }}
+                onClick={() => {
+                  retriedRef.current = false;
+                  setShowRetry(false);
+                  regenerate();
+                }}
               >
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M2 6C2 3.8 3.8 2 6 2C7.4 2 8.6 2.7 9.3 3.8M10 6C10 8.2 8.2 10 6 10C4.6 10 3.4 9.3 2.7 8.2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-                  <path d="M9 1.5V4H11.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path
+                    d="M2 6C2 3.8 3.8 2 6 2C7.4 2 8.6 2.7 9.3 3.8M10 6C10 8.2 8.2 10 6 10C4.6 10 3.4 9.3 2.7 8.2"
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                  />
+                  <path
+                    d="M9 1.5V4H11.5"
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
                 Request failed — click to retry
               </button>
@@ -354,8 +384,16 @@ export function ChatInterface() {
                   aria-label="Wallet panel"
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <rect x="1" y="2" width="12" height="10" rx="2" stroke="currentColor" strokeWidth="1.2"/>
-                    <path d="M9 2V12" stroke="currentColor" strokeWidth="1.2"/>
+                    <rect
+                      x="1"
+                      y="2"
+                      width="12"
+                      height="10"
+                      rx="2"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                    />
+                    <path d="M9 2V12" stroke="currentColor" strokeWidth="1.2" />
                   </svg>
                 </button>
                 <button
@@ -365,18 +403,39 @@ export function ChatInterface() {
                   aria-label="Send message"
                 >
                   {isLoading ? (
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="spin">
-                      <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="8 8"/>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 14 14"
+                      fill="none"
+                      className="spin"
+                    >
+                      <circle
+                        cx="7"
+                        cy="7"
+                        r="5"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeDasharray="8 8"
+                      />
                     </svg>
                   ) : (
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                      <path d="M3 7H11M11 7L7.5 3.5M11 7L7.5 10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path
+                        d="M3 7H11M11 7L7.5 3.5M11 7L7.5 10.5"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
                     </svg>
                   )}
                 </button>
               </div>
             </form>
-            <div className="input-hint">Shift+Enter for new line · Enter to send</div>
+            <div className="input-hint">
+              Shift+Enter for new line · Enter to send
+            </div>
           </div>
         </div>
       </div>
@@ -389,7 +448,12 @@ export function ChatInterface() {
           onClick={() => setSidebarOpen(false)}
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M2 2L12 12M12 2L2 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            <path
+              d="M2 2L12 12M12 2L2 12"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
           </svg>
         </button>
         <WalletSidebar
@@ -403,7 +467,10 @@ export function ChatInterface() {
 
       {/* Mobile sidebar backdrop */}
       {sidebarOpen && (
-        <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setSidebarOpen(false)}
+        />
       )}
 
       {pendingProposal && !isWrongNetwork && (
@@ -470,7 +537,11 @@ function AssistantMessage({
                   ? "error"
                   : "running";
             const icon =
-              state === "output-available" ? "✓" : state === "output-error" ? "✕" : "…";
+              state === "output-available"
+                ? "✓"
+                : state === "output-error"
+                  ? "✕"
+                  : "…";
             return (
               <span key={i} className={`tool-badge ${cls}`}>
                 {icon} {toolName}
@@ -488,15 +559,38 @@ function AssistantMessage({
 
       {content && (
         <div className="msg-actions">
-          <button className="msg-action-btn" onClick={handleCopy} title="Copy" type="button">
+          <button
+            className="msg-action-btn"
+            onClick={handleCopy}
+            title="Copy"
+            type="button"
+          >
             {copied ? (
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path d="M2 6L5 9L10 3" stroke="var(--success)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                <path
+                  d="M2 6L5 9L10 3"
+                  stroke="var(--success)"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
             ) : (
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <rect x="1" y="3" width="7" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.1"/>
-                <path d="M4 3V2C4 1.4 4.4 1 5 1H10C10.6 1 11 1.4 11 2V7C11 7.6 10.6 8 10 8H9" stroke="currentColor" strokeWidth="1.1"/>
+                <rect
+                  x="1"
+                  y="3"
+                  width="7"
+                  height="8"
+                  rx="1.5"
+                  stroke="currentColor"
+                  strokeWidth="1.1"
+                />
+                <path
+                  d="M4 3V2C4 1.4 4.4 1 5 1H10C10.6 1 11 1.4 11 2V7C11 7.6 10.6 8 10 8H9"
+                  stroke="currentColor"
+                  strokeWidth="1.1"
+                />
               </svg>
             )}
           </button>
@@ -521,7 +615,9 @@ function WalletSidebar({
   balanceData?: { formatted: string; symbol: string } | null;
   balanceLoading: boolean;
 }) {
-  const shortAddr = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : null;
+  const shortAddr = address
+    ? `${address.slice(0, 6)}…${address.slice(-4)}`
+    : null;
   const [copied, setCopied] = useState(false);
 
   const copyAddress = () => {
@@ -538,15 +634,37 @@ function WalletSidebar({
         <div className="sidebar-label">Wallet</div>
         {isConnected && address ? (
           <>
-            <button className="address-chip" title={copied ? "Copied!" : address} onClick={copyAddress}>
+            <button
+              className="address-chip"
+              title={copied ? "Copied!" : address}
+              onClick={copyAddress}
+            >
               {copied ? (
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                  <path d="M2 5L4.5 7.5L8.5 2.5" stroke="var(--success)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path
+                    d="M2 5L4.5 7.5L8.5 2.5"
+                    stroke="var(--success)"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               ) : (
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                  <rect x="1" y="3" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1"/>
-                  <path d="M3 3V2C3 1.4 3.4 1 4 1H8C8.6 1 9 1.4 9 2V6C9 6.6 8.6 7 8 7H7" stroke="currentColor" strokeWidth="1"/>
+                  <rect
+                    x="1"
+                    y="3"
+                    width="6"
+                    height="6"
+                    rx="1"
+                    stroke="currentColor"
+                    strokeWidth="1"
+                  />
+                  <path
+                    d="M3 3V2C3 1.4 3.4 1 4 1H8C8.6 1 9 1.4 9 2V6C9 6.6 8.6 7 8 7H7"
+                    stroke="currentColor"
+                    strokeWidth="1"
+                  />
                 </svg>
               )}
               {shortAddr}
@@ -559,7 +677,9 @@ function WalletSidebar({
             </div>
           </>
         ) : (
-          <div style={{ fontSize: 12, color: "var(--text-3)" }}>Not connected</div>
+          <div style={{ fontSize: 12, color: "var(--text-3)" }}>
+            Not connected
+          </div>
         )}
       </div>
 
@@ -569,13 +689,18 @@ function WalletSidebar({
         {isConnected ? (
           balanceLoading ? (
             <div>
-              <div className="skeleton" style={{ width: 80, height: 22, marginBottom: 4 }} />
+              <div
+                className="skeleton"
+                style={{ width: 80, height: 22, marginBottom: 4 }}
+              />
               <div className="skeleton" style={{ width: 50, height: 12 }} />
             </div>
           ) : (
             <>
               <div className="balance-display">
-                {balanceData ? parseFloat(balanceData.formatted).toFixed(4) : "—"}
+                {balanceData
+                  ? parseFloat(balanceData.formatted).toFixed(4)
+                  : "—"}
               </div>
               <div className="balance-sub">
                 {balanceData?.symbol ?? "ETH"} · Sepolia
@@ -583,7 +708,9 @@ function WalletSidebar({
             </>
           )
         ) : (
-          <div style={{ fontSize: 12, color: "var(--text-3)" }}>Connect wallet</div>
+          <div style={{ fontSize: 12, color: "var(--text-3)" }}>
+            Connect wallet
+          </div>
         )}
       </div>
 
@@ -595,10 +722,24 @@ function WalletSidebar({
             { label: "Chain", value: "Sepolia" },
             { label: "Chain ID", value: "11155111" },
             { label: "RPC", value: "Alchemy" },
-          ].map(r => (
-            <div key={r.label} style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+          ].map((r) => (
+            <div
+              key={r.label}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 11,
+              }}
+            >
               <span style={{ color: "var(--text-3)" }}>{r.label}</span>
-              <span style={{ fontFamily: "var(--font-geist-mono)", color: "var(--text-2)" }}>{r.value}</span>
+              <span
+                style={{
+                  fontFamily: "var(--font-geist-mono)",
+                  color: "var(--text-2)",
+                }}
+              >
+                {r.value}
+              </span>
             </div>
           ))}
         </div>
@@ -609,16 +750,31 @@ function WalletSidebar({
         <div className="sidebar-label">Audit Log</div>
         <div className="audit-scroll">
           {auditEntries.length === 0 ? (
-            <div style={{ fontSize: 11, color: "var(--text-3)" }}>No activity yet</div>
+            <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+              No activity yet
+            </div>
           ) : (
             auditEntries.map((e, i) => (
               <div key={i} className="audit-entry">
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <div style={{
-                    width: 5, height: 5, borderRadius: "50%", flexShrink: 0,
-                    background: e.status === "success" ? "var(--success)" : e.status === "running" ? "var(--accent)" : "var(--danger)",
-                    animation: e.status === "running" ? "pulse-dot 1.5s ease-in-out infinite" : "none",
-                  }} />
+                  <div
+                    style={{
+                      width: 5,
+                      height: 5,
+                      borderRadius: "50%",
+                      flexShrink: 0,
+                      background:
+                        e.status === "success"
+                          ? "var(--success)"
+                          : e.status === "running"
+                            ? "var(--accent)"
+                            : "var(--danger)",
+                      animation:
+                        e.status === "running"
+                          ? "pulse-dot 1.5s ease-in-out infinite"
+                          : "none",
+                    }}
+                  />
                   <span className="audit-action">{e.action}</span>
                 </div>
                 <span className="audit-time">{e.time}</span>
@@ -636,10 +792,24 @@ function WalletSidebar({
             { label: "Simulation", ok: true },
             { label: "Supervisor", ok: true },
             { label: "Audit Log", ok: true },
-          ].map(s => (
-            <div key={s.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11 }}>
+          ].map((s) => (
+            <div
+              key={s.label}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                fontSize: 11,
+              }}
+            >
               <span style={{ color: "var(--text-3)" }}>{s.label}</span>
-              <span style={{ color: s.ok ? "var(--success)" : "var(--danger)", fontFamily: "var(--font-geist-mono)", fontSize: 10 }}>
+              <span
+                style={{
+                  color: s.ok ? "var(--success)" : "var(--danger)",
+                  fontFamily: "var(--font-geist-mono)",
+                  fontSize: 10,
+                }}
+              >
                 {s.ok ? "active" : "off"}
               </span>
             </div>
@@ -649,4 +819,3 @@ function WalletSidebar({
     </div>
   );
 }
-

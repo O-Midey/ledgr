@@ -34,13 +34,20 @@ export function ConfirmTxModal({
   const { isConnected, chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const [error, setError] = useState<string | null>(null);
-  const [submittedHash, setSubmittedHash] = useState<`0x${string}` | undefined>();
-  const [phase, setPhase] = useState<"ready" | "signing" | "confirming">("ready");
+  const [submittedHash, setSubmittedHash] = useState<
+    `0x${string}` | undefined
+  >();
+  const [phase, setPhase] = useState<"ready" | "signing" | "confirming">(
+    "ready",
+  );
   const confirmTimeoutRef = useRef<NodeJS.Timeout>();
   const [confirmationStalled, setConfirmationStalled] = useState(false);
 
-  const { sendTransactionAsync, isPending: isSigning, error: sendError } =
-    useSendTransaction();
+  const {
+    sendTransactionAsync,
+    isPending: isSigning,
+    error: sendError,
+  } = useSendTransaction();
 
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
     hash: submittedHash,
@@ -172,8 +179,8 @@ export function ConfirmTxModal({
           Confirm transaction
         </h3>
         <p className="tx-modal-sub">
-          Review details below. This will sign and broadcast from your connected wallet on
-          Sepolia.
+          Review details below. This will sign and broadcast from your connected
+          wallet on Sepolia.
         </p>
 
         <div className="tx-preview">
@@ -197,18 +204,34 @@ export function ConfirmTxModal({
 
         {/* Status during confirmation */}
         {phase !== "ready" && (
-          <div className={`tx-modal-status ${phase === "signing" ? "signing" : "confirming"}`}>
+          <div
+            className={`tx-modal-status ${phase === "signing" ? "signing" : "confirming"}`}
+          >
             {phase === "signing" ? (
               <>
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="spin">
-                  <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="8 8"/>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  className="spin"
+                >
+                  <circle
+                    cx="7"
+                    cy="7"
+                    r="5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeDasharray="8 8"
+                  />
                 </svg>
                 Waiting for wallet signature…
               </>
             ) : confirmationStalled ? (
               <>
                 <span style={{ color: "var(--warning)" }}>⚠</span>
-                Confirmation taking a while. You can close this and check later on{" "}
+                Confirmation taking a while. You can close this and check later
+                on{" "}
                 <a
                   href={submittedHash ? txExplorerUrl(submittedHash) : "#"}
                   target="_blank"
@@ -219,8 +242,21 @@ export function ConfirmTxModal({
               </>
             ) : (
               <>
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="spin">
-                  <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="8 8"/>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  className="spin"
+                >
+                  <circle
+                    cx="7"
+                    cy="7"
+                    r="5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeDasharray="8 8"
+                  />
                 </svg>
                 Broadcasting to network…
               </>
@@ -262,8 +298,21 @@ export function ConfirmTxModal({
           >
             {phase === "signing" || phase === "confirming" ? (
               <>
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="spin">
-                  <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="8 8"/>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  className="spin"
+                >
+                  <circle
+                    cx="7"
+                    cy="7"
+                    r="5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeDasharray="8 8"
+                  />
                 </svg>
                 <span>{getButtonText()}</span>
               </>
