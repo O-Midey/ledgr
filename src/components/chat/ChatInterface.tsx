@@ -8,6 +8,7 @@ import {
   useBalance,
   useWaitForTransactionReceipt,
 } from "wagmi";
+import { formatEther, formatUnits } from "viem";
 import { sepolia } from "viem/chains";
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
@@ -18,14 +19,33 @@ import {
   type TxPreviewStatus,
 } from "./TxPreviewCard";
 import { ConfirmTxModal } from "./ConfirmTxModal";
+import { AddressBookPanel } from "./AddressBookPanel";
+import { AddressSuggestions } from "./AddressSuggestions";
+import { ContextualChips } from "./ContextualChips";
+import type { AddressAlias } from "@/lib/useAddressBook";
 import { isTxProposalOutput, type TxProposal } from "@/lib/txProposal";
 import { formatAuditForSidebar } from "@/audit/sessionStore";
 import { generateId } from "@/lib/utils";
 
-function buildTransport(address: string | undefined, sessionId: string) {
-  const headers: Record<string, string> = { "x-session-id": sessionId };
-  if (address) headers["x-wallet-address"] = address;
-  return new DefaultChatTransport({ api: "/api/chat", headers });
+function buildTransport(
+  sessionId: string,
+  getConnectedAddress: () => string | undefined,
+) {
+  return new DefaultChatTransport({
+    api: "/api/chat",
+    headers: { "x-session-id": sessionId },
+    prepareSendMessagesRequest: ({ body, headers }) => {
+      const connectedAddress = getConnectedAddress();
+      return {
+        body,
+        headers: {
+          ...(headers as Record<string, string>),
+          "x-session-id": sessionId,
+          ...(connectedAddress ? { "x-wallet-address": connectedAddress } : {}),
+        },
+      };
+    },
+  });
 }
 
 function findPendingProposal(
@@ -65,23 +85,68 @@ interface AuditEntry {
   action: string;
   time: string;
   status: "success" | "running" | "error";
+  eventType: string;
+  severity: "info" | "warn" | "error" | "critical";
+  toolName?: string;
+  hash?: string;
+  previousHash?: string;
   duration?: string;
 }
 
 interface TxBackgroundStatus {
-  hash: `0x${string}`;
+  hash?: `0x${string}`;
   to: string;
   valueEth: string;
   idempotencyKey: string;
-  status: "confirming" | "confirmed" | "failed";
+  phase:
+    | "signature_requested"
+    | "submitted"
+    | "confirming"
+    | "confirmed"
+    | "reverted"
+    | "failed";
+  startedAt?: number; // timestamp when entered "submitted" phase
+  isStuck?: boolean; // true if in confirming >60s
 }
 
 interface LocalTxNotice {
   id: string;
-  status: "confirmed" | "failed";
+  status: "confirmed" | "failed" | "reverted";
   hash: `0x${string}`;
   to: string;
   valueEth: string;
+  blockNumber?: string;
+  gasUsed?: string;
+  effectiveGasPriceGwei?: string;
+  txFeeEth?: string;
+}
+
+function receiptMetrics(receipt: unknown): {
+  blockNumber?: string;
+  gasUsed?: string;
+  effectiveGasPriceGwei?: string;
+  txFeeEth?: string;
+} {
+  const r = receipt as {
+    blockNumber?: bigint;
+    gasUsed?: bigint;
+    effectiveGasPrice?: bigint;
+  };
+
+  const blockNumber =
+    typeof r?.blockNumber === "bigint" ? r.blockNumber.toString() : undefined;
+  const gasUsed =
+    typeof r?.gasUsed === "bigint" ? r.gasUsed.toString() : undefined;
+  const effectiveGasPriceGwei =
+    typeof r?.effectiveGasPrice === "bigint"
+      ? Number(formatUnits(r.effectiveGasPrice, 9)).toFixed(2)
+      : undefined;
+  const txFeeEth =
+    typeof r?.effectiveGasPrice === "bigint" && typeof r?.gasUsed === "bigint"
+      ? Number(formatEther(r.effectiveGasPrice * r.gasUsed)).toFixed(6)
+      : undefined;
+
+  return { blockNumber, gasUsed, effectiveGasPriceGwei, txFeeEth };
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
@@ -98,9 +163,15 @@ export function ChatInterface() {
   });
 
   const sessionId = useMemo(() => generateId(), []);
+  const connectedAddressRef = useRef<string | undefined>(address);
+
+  useEffect(() => {
+    connectedAddressRef.current = address;
+  }, [address]);
+
   const transport = useMemo(
-    () => buildTransport(address, sessionId),
-    [address, sessionId],
+    () => buildTransport(sessionId, () => connectedAddressRef.current),
+    [sessionId],
   );
   const { messages, sendMessage, status, error, regenerate } = useChat({
     transport,
@@ -109,12 +180,12 @@ export function ChatInterface() {
   const [input, setInput] = useState("");
   const [showRetry, setShowRetry] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [addressBookOpen, setAddressBookOpen] = useState(false);
+  const [addressSuggestionQuery, setAddressSuggestionQuery] = useState("");
   const [dismissedProposals, setDismissedProposals] = useState<Set<string>>(
     () => new Set(),
   );
-  const [serverAudit, setServerAudit] = useState<
-    { action: string; time: string; status: "success" | "running" | "error" }[]
-  >([]);
+  const [serverAudit, setServerAudit] = useState<AuditEntry[]>([]);
   const [txStatus, setTxStatus] = useState<TxBackgroundStatus | null>(null);
   const [txNotices, setTxNotices] = useState<LocalTxNotice[]>([]);
   const retriedRef = useRef(false);
@@ -198,6 +269,36 @@ export function ChatInterface() {
     }
   }, [sessionId]);
 
+  const handleSelectAddressAlias = useCallback(
+    (alias: AddressAlias) => {
+      // Insert address into input at current cursor position or end
+      const textarea = textareaRef.current;
+      if (!textarea) {
+        setInput((prev) => `${prev} ${alias.address}`);
+        return;
+      }
+
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const beforeCursor = input.substring(0, start);
+      const afterCursor = input.substring(end);
+      const newInput = `${beforeCursor}${alias.address}${afterCursor}`;
+
+      setInput(newInput);
+      setAddressSuggestionQuery("");
+
+      // Restore cursor position after address
+      setTimeout(() => {
+        if (textarea) {
+          const newCursorPos = start + alias.address.length;
+          textarea.setSelectionRange(newCursorPos, newCursorPos);
+          textarea.focus();
+        }
+      }, 0);
+    },
+    [input],
+  );
+
   useEffect(() => {
     if (status === "ready" || status === "streaming") {
       refreshAudit();
@@ -212,6 +313,8 @@ export function ChatInterface() {
           action: "user_input",
           time: formatTime(new Date()),
           status: "success",
+          eventType: "USER_INPUT",
+          severity: "info",
         });
       }
       if (m.role === "assistant") {
@@ -228,6 +331,14 @@ export function ChatInterface() {
                   : tp.state === "output-error"
                     ? "error"
                     : "running",
+              eventType:
+                tp.state === "output-available"
+                  ? "TOOL_CALL_SUCCESS"
+                  : tp.state === "output-error"
+                    ? "TOOL_CALL_FAILED"
+                    : "TOOL_CALL_START",
+              severity: tp.state === "output-error" ? "error" : "info",
+              toolName,
             });
           }
         });
@@ -238,6 +349,8 @@ export function ChatInterface() {
         action: "agent_thinking",
         time: formatTime(new Date()),
         status: "running",
+        eventType: "AGENT_THINKING",
+        severity: "info",
       });
     }
     return entries.slice(-8).reverse();
@@ -252,6 +365,36 @@ export function ChatInterface() {
 
   const hasMessages = messages.length > 0;
 
+  const txLiveAnnouncement = useMemo(() => {
+    const latestNotice = txNotices[txNotices.length - 1];
+    if (latestNotice) {
+      if (latestNotice.status === "confirmed") {
+        return `Transaction confirmed. ${latestNotice.valueEth} ETH sent to ${latestNotice.to}.`;
+      }
+      if (latestNotice.status === "reverted") {
+        return "Transaction reverted on-chain.";
+      }
+      return "Transaction confirmation delayed.";
+    }
+
+    if (!txStatus) return "";
+    if (txStatus.phase === "signature_requested") {
+      return "Transaction signature requested in wallet.";
+    }
+    if (txStatus.phase === "submitted") {
+      return "Transaction submitted to Sepolia.";
+    }
+    if (txStatus.phase === "confirming") {
+      return txStatus.isStuck
+        ? "Transaction is taking longer than usual to confirm."
+        : "Waiting for on-chain confirmation.";
+    }
+    if (txStatus.phase === "failed") {
+      return "Transaction confirmation failed.";
+    }
+    return "";
+  }, [txStatus, txNotices]);
+
   const {
     isSuccess: txConfirmed,
     isError: txFailed,
@@ -260,27 +403,64 @@ export function ChatInterface() {
     hash: txStatus?.hash,
     chainId: sepolia.id,
     query: {
-      enabled: txStatus?.status === "confirming",
+      enabled:
+        !!txStatus?.hash &&
+        (txStatus?.phase === "submitted" || txStatus?.phase === "confirming"),
       retry: 5,
     },
   });
 
   useEffect(() => {
-    if (!txStatus || txStatus.status !== "confirming") return;
+    if (!txStatus || txStatus.phase !== "submitted") return;
+    const id = setTimeout(() => {
+      setTxStatus((prev) =>
+        prev && prev.phase === "submitted"
+          ? {
+              ...prev,
+              phase: "confirming",
+              startedAt: prev.startedAt || Date.now(),
+            }
+          : prev,
+      );
+    }, 700);
+    return () => clearTimeout(id);
+  }, [txStatus]);
+
+  // Detect stuck tx (>60s in confirming)
+  useEffect(() => {
+    if (!txStatus || txStatus.phase !== "confirming" || !txStatus.startedAt)
+      return;
+    const checkStuck = setInterval(() => {
+      setTxStatus((prev) => {
+        if (!prev || prev.phase !== "confirming" || !prev.startedAt)
+          return prev;
+        const elapsedMs = Date.now() - prev.startedAt;
+        const isStuckNow = elapsedMs > 60_000;
+        return { ...prev, isStuck: isStuckNow };
+      });
+    }, 5000); // Check every 5s
+    return () => clearInterval(checkStuck);
+  }, [txStatus?.phase]);
+
+  useEffect(() => {
+    if (!txStatus || txStatus.phase !== "confirming") return;
+    if (!txStatus.hash) return;
     if (!txConfirmed) return;
 
     if (txReceipt?.status === "reverted") {
-      setTxStatus((prev) => (prev ? { ...prev, status: "failed" } : prev));
-      if (notifiedTxHashRef.current !== txStatus.hash) {
+      const metrics = receiptMetrics(txReceipt);
+      setTxStatus((prev) => (prev ? { ...prev, phase: "reverted" } : prev));
+      if (txStatus.hash && notifiedTxHashRef.current !== txStatus.hash) {
         notifiedTxHashRef.current = txStatus.hash;
         setTxNotices((prev) => [
           ...prev,
           {
             id: `failed-${txStatus.hash}`,
-            status: "failed",
+            status: "reverted",
             hash: txStatus.hash,
             to: txStatus.to,
             valueEth: txStatus.valueEth,
+            ...metrics,
           },
         ]);
       }
@@ -307,12 +487,13 @@ export function ChatInterface() {
       }
 
       if (!cancelled) {
+        const metrics = receiptMetrics(txReceipt);
         setTxStatus((prev) =>
           prev && prev.hash === txStatus.hash
-            ? { ...prev, status: "confirmed" }
+            ? { ...prev, phase: "confirmed" }
             : prev,
         );
-        if (notifiedTxHashRef.current !== txStatus.hash) {
+        if (txStatus.hash && notifiedTxHashRef.current !== txStatus.hash) {
           notifiedTxHashRef.current = txStatus.hash;
           setTxNotices((prev) => [
             ...prev,
@@ -322,6 +503,7 @@ export function ChatInterface() {
               hash: txStatus.hash,
               to: txStatus.to,
               valueEth: txStatus.valueEth,
+              ...metrics,
             },
           ]);
         }
@@ -335,10 +517,11 @@ export function ChatInterface() {
   }, [txConfirmed, txStatus, txReceipt, sessionId, refreshAudit]);
 
   useEffect(() => {
-    if (!txStatus || txStatus.status !== "confirming") return;
+    if (!txStatus || txStatus.phase !== "confirming") return;
+    if (!txStatus.hash) return;
     if (!txFailed) return;
-    setTxStatus((prev) => (prev ? { ...prev, status: "failed" } : prev));
-    if (notifiedTxHashRef.current !== txStatus.hash) {
+    setTxStatus((prev) => (prev ? { ...prev, phase: "failed" } : prev));
+    if (txStatus.hash && notifiedTxHashRef.current !== txStatus.hash) {
       notifiedTxHashRef.current = txStatus.hash;
       setTxNotices((prev) => [
         ...prev,
@@ -365,14 +548,51 @@ export function ChatInterface() {
         to: proposal.to,
         valueEth: proposal.valueEth,
         idempotencyKey: proposal.idempotencyKey,
-        status: "confirming",
+        phase: "submitted",
+        startedAt: Date.now(),
       });
     },
     [pendingProposal],
   );
 
+  const handleTxLifecycleChange = useCallback(
+    (_phase: "signature_requested", proposal: TxProposal) => {
+      setTxStatus((prev) => {
+        if (prev && prev.idempotencyKey === proposal.idempotencyKey) {
+          return { ...prev, phase: "signature_requested" };
+        }
+        return {
+          hash: prev?.hash,
+          to: proposal.to,
+          valueEth: proposal.valueEth,
+          idempotencyKey: proposal.idempotencyKey,
+          phase: "signature_requested",
+          startedAt: undefined,
+          isStuck: false,
+        };
+      });
+    },
+    [],
+  );
+
   return (
     <div className="chat-body">
+      <div
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {txLiveAnnouncement}
+      </div>
+      <div
+        className="sr-only"
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+      >
+        {showRetry ? "Request failed. Retry is available." : ""}
+      </div>
       <div className="chat-column">
         <div className="chat-messages" ref={scrollRef} onScroll={handleScroll}>
           {/* Empty state */}
@@ -414,12 +634,23 @@ export function ChatInterface() {
 
             return (
               <div key={m.id} className="msg-row assistant">
-                <AssistantMessage
-                  content={textContent}
-                  toolParts={toolParts}
-                  isStreaming={isLastAssistant && isStreaming}
-                  txStatus={txStatus as TxPreviewStatus | null}
-                />
+                <div className="msg-assistant-wrapper">
+                  <AssistantMessage
+                    content={textContent}
+                    toolParts={toolParts}
+                    isStreaming={isLastAssistant && isStreaming}
+                    txStatus={txStatus as TxPreviewStatus | null}
+                  />
+                  {isLastAssistant && !isStreaming && (
+                    <ContextualChips
+                      messageText={textContent}
+                      onChipClick={(action) => {
+                        setInput(action);
+                        setTimeout(() => textareaRef.current?.focus(), 0);
+                      }}
+                    />
+                  )}
+                </div>
                 <div className="msg-timestamp">{formatTime(new Date())}</div>
               </div>
             );
@@ -435,7 +666,12 @@ export function ChatInterface() {
           {/* Thinking dots */}
           {showThinking && (
             <div className="msg-row assistant">
-              <div className="typing-indicator">
+              <div
+                className="typing-indicator"
+                role="status"
+                aria-live="polite"
+              >
+                <span className="sr-only">Assistant is thinking</span>
                 <div className="typing-dot" />
                 <div className="typing-dot" />
                 <div className="typing-dot" />
@@ -501,21 +737,61 @@ export function ChatInterface() {
             )}
 
             <form onSubmit={handleSubmit} className="chat-input-form">
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={
-                  isWrongNetwork
-                    ? "Switch to Sepolia first…"
-                    : "Ask anything about your wallet…"
-                }
-                disabled={isWrongNetwork || isLoading}
-                className="chat-textarea"
-                rows={1}
-              />
+              <div className="chat-textarea-wrapper">
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    // Simple address query detection (word after @ or 0x prefix)
+                    const lastWord = e.target.value.split(/\s+/).pop() || "";
+                    if (lastWord.startsWith("0x") || lastWord.includes("@")) {
+                      setAddressSuggestionQuery(lastWord);
+                    } else {
+                      setAddressSuggestionQuery("");
+                    }
+                  }}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    isWrongNetwork
+                      ? "Switch to Sepolia first…"
+                      : "Ask anything about your wallet…"
+                  }
+                  disabled={isWrongNetwork || isLoading}
+                  className="chat-textarea"
+                  rows={1}
+                />
+                {addressSuggestionQuery && (
+                  <AddressSuggestions
+                    query={addressSuggestionQuery}
+                    isOpen={true}
+                    onSelect={handleSelectAddressAlias}
+                  />
+                )}
+              </div>
               <div className="chat-input-actions">
+                <button
+                  type="button"
+                  className="sidebar-toggle-btn"
+                  onClick={() => setAddressBookOpen(true)}
+                  title="Address book"
+                  aria-label="Address book"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <circle
+                      cx="7"
+                      cy="4.5"
+                      r="2.5"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                    />
+                    <path
+                      d="M2 9.5C2 8 4.5 7 7 7C9.5 7 12 8 12 9.5V11.5C12 12.3 11.3 13 10.5 13H3.5C2.7 13 2 12.3 2 11.5V9.5Z"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                    />
+                  </svg>
+                </button>
                 <button
                   type="button"
                   className="sidebar-toggle-btn"
@@ -580,12 +856,20 @@ export function ChatInterface() {
         </div>
       </div>
 
+      {/* Address Book Panel */}
+      <AddressBookPanel
+        isOpen={addressBookOpen}
+        onClose={() => setAddressBookOpen(false)}
+        onSelectAlias={handleSelectAddressAlias}
+      />
+
       {/* Wallet sidebar — desktop always visible, mobile overlay */}
       <div className={`wallet-sidebar ${sidebarOpen ? "open" : ""}`}>
         {/* Mobile close */}
         <button
           className="sidebar-close-btn"
           onClick={() => setSidebarOpen(false)}
+          aria-label="Close wallet sidebar"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path
@@ -610,6 +894,7 @@ export function ChatInterface() {
         <div
           className="sidebar-backdrop"
           onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
         />
       )}
 
@@ -622,6 +907,7 @@ export function ChatInterface() {
             )
           }
           onSubmitted={handleTxSubmitted}
+          onLifecycleChange={handleTxLifecycleChange}
         />
       )}
     </div>
@@ -746,13 +1032,18 @@ function TxCompletionNotice({ notice }: { notice: LocalTxNotice }) {
   const shortHash = `${notice.hash.slice(0, 10)}…${notice.hash.slice(-6)}`;
   const explorer = `https://sepolia.etherscan.io/tx/${notice.hash}`;
   const isConfirmed = notice.status === "confirmed";
+  const isReverted = notice.status === "reverted";
 
   return (
     <div
       className={`tx-preview chat-tx-preview tx-complete-card ${notice.status}`}
     >
       <div className="tx-preview-label">
-        {isConfirmed ? "Transaction confirmed" : "Confirmation delayed"}
+        {isConfirmed
+          ? "Transaction confirmed"
+          : isReverted
+            ? "Transaction reverted"
+            : "Confirmation delayed"}
       </div>
 
       <div className="tx-row">
@@ -775,10 +1066,46 @@ function TxCompletionNotice({ notice }: { notice: LocalTxNotice }) {
         </a>
       </div>
 
+      {(notice.blockNumber ||
+        notice.gasUsed ||
+        notice.effectiveGasPriceGwei ||
+        notice.txFeeEth) && (
+        <div className="tx-receipt-grid">
+          {notice.blockNumber && (
+            <div className="tx-receipt-item">
+              <span className="tx-label">Block</span>
+              <span className="tx-value mono">#{notice.blockNumber}</span>
+            </div>
+          )}
+          {notice.gasUsed && (
+            <div className="tx-receipt-item">
+              <span className="tx-label">Gas Used</span>
+              <span className="tx-value mono">{notice.gasUsed}</span>
+            </div>
+          )}
+          {notice.effectiveGasPriceGwei && (
+            <div className="tx-receipt-item">
+              <span className="tx-label">Gas Price</span>
+              <span className="tx-value mono">
+                {notice.effectiveGasPriceGwei} gwei
+              </span>
+            </div>
+          )}
+          {notice.txFeeEth && (
+            <div className="tx-receipt-item">
+              <span className="tx-label">Tx Fee</span>
+              <span className="tx-value mono">{notice.txFeeEth} ETH</span>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className={`tx-preview-status ${isConfirmed ? "done" : "error"}`}>
         {isConfirmed
           ? "Finalized on Sepolia"
-          : "Still pending on-chain. Open explorer for live status"}
+          : isReverted
+            ? "Reverted on Sepolia. Review wallet state before retrying"
+            : "Still pending on-chain. Open explorer for live status"}
       </div>
     </div>
   );
@@ -803,6 +1130,12 @@ function WalletSidebar({
     ? `${address.slice(0, 6)}…${address.slice(-4)}`
     : null;
   const [copied, setCopied] = useState(false);
+  const [toolFilter, setToolFilter] = useState("all");
+  const [severityFilter, setSeverityFilter] = useState("all");
+  const [eventFilter, setEventFilter] = useState("all");
+  const [groupBy, setGroupBy] = useState<
+    "none" | "tool" | "severity" | "event"
+  >("severity");
 
   const copyAddress = () => {
     if (!address) return;
@@ -810,6 +1143,52 @@ function WalletSidebar({
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
+
+  const toolOptions = useMemo(
+    () =>
+      Array.from(new Set(auditEntries.map((e) => e.toolName).filter(Boolean))),
+    [auditEntries],
+  );
+  const eventOptions = useMemo(
+    () => Array.from(new Set(auditEntries.map((e) => e.eventType))),
+    [auditEntries],
+  );
+
+  const filteredAuditEntries = useMemo(
+    () =>
+      auditEntries.filter((e) => {
+        if (toolFilter !== "all" && e.toolName !== toolFilter) return false;
+        if (severityFilter !== "all" && e.severity !== severityFilter)
+          return false;
+        if (eventFilter !== "all" && e.eventType !== eventFilter) return false;
+        return true;
+      }),
+    [auditEntries, toolFilter, severityFilter, eventFilter],
+  );
+
+  const groupedAuditEntries = useMemo(() => {
+    if (groupBy === "none") {
+      return [{ label: "All", entries: filteredAuditEntries }];
+    }
+
+    const bucket = new Map<string, AuditEntry[]>();
+    for (const entry of filteredAuditEntries) {
+      const key =
+        groupBy === "tool"
+          ? (entry.toolName ?? "unknown")
+          : groupBy === "severity"
+            ? entry.severity
+            : entry.eventType;
+      const current = bucket.get(key) ?? [];
+      current.push(entry);
+      bucket.set(key, current);
+    }
+
+    return Array.from(bucket.entries()).map(([label, entries]) => ({
+      label,
+      entries,
+    }));
+  }, [filteredAuditEntries, groupBy]);
 
   return (
     <div className="sidebar-inner">
@@ -932,36 +1311,133 @@ function WalletSidebar({
       {/* Audit log — scrollable, bounded */}
       <div className="sidebar-section sidebar-audit">
         <div className="sidebar-label">Audit Log</div>
+        <div className="audit-controls">
+          <select
+            className="audit-select"
+            value={toolFilter}
+            onChange={(e) => setToolFilter(e.target.value)}
+          >
+            <option value="all">All tools</option>
+            {toolOptions.map((tool) => (
+              <option key={tool} value={tool}>
+                {tool}
+              </option>
+            ))}
+          </select>
+          <select
+            className="audit-select"
+            value={severityFilter}
+            onChange={(e) => setSeverityFilter(e.target.value)}
+          >
+            <option value="all">All severity</option>
+            <option value="info">Info</option>
+            <option value="warn">Warn</option>
+            <option value="error">Error</option>
+            <option value="critical">Critical</option>
+          </select>
+          <select
+            className="audit-select"
+            value={eventFilter}
+            onChange={(e) => setEventFilter(e.target.value)}
+          >
+            <option value="all">All events</option>
+            {eventOptions.map((eventType) => (
+              <option key={eventType} value={eventType}>
+                {eventType}
+              </option>
+            ))}
+          </select>
+          <select
+            className="audit-select"
+            value={groupBy}
+            onChange={(e) =>
+              setGroupBy(
+                e.target.value as "none" | "tool" | "severity" | "event",
+              )
+            }
+          >
+            <option value="severity">Group: severity</option>
+            <option value="tool">Group: tool</option>
+            <option value="event">Group: event</option>
+            <option value="none">No grouping</option>
+          </select>
+        </div>
         <div className="audit-scroll">
-          {auditEntries.length === 0 ? (
+          {filteredAuditEntries.length === 0 ? (
             <div style={{ fontSize: 11, color: "var(--text-3)" }}>
               No activity yet
             </div>
           ) : (
-            auditEntries.map((e, i) => (
-              <div key={i} className="audit-entry">
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <div
-                    style={{
-                      width: 5,
-                      height: 5,
-                      borderRadius: "50%",
-                      flexShrink: 0,
-                      background:
-                        e.status === "success"
-                          ? "var(--success)"
-                          : e.status === "running"
-                            ? "var(--accent)"
-                            : "var(--danger)",
-                      animation:
-                        e.status === "running"
-                          ? "pulse-dot 1.5s ease-in-out infinite"
-                          : "none",
-                    }}
-                  />
-                  <span className="audit-action">{e.action}</span>
-                </div>
-                <span className="audit-time">{e.time}</span>
+            groupedAuditEntries.map((group) => (
+              <div key={group.label} className="audit-group">
+                {groupBy !== "none" && (
+                  <div className="audit-group-label">{group.label}</div>
+                )}
+                {group.entries.map((e, i) => (
+                  <details
+                    key={`${group.label}-${i}-${e.time}`}
+                    className="audit-entry"
+                  >
+                    <summary className="audit-entry-summary">
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 5,
+                            height: 5,
+                            borderRadius: "50%",
+                            flexShrink: 0,
+                            background:
+                              e.status === "success"
+                                ? "var(--success)"
+                                : e.status === "running"
+                                  ? "var(--accent)"
+                                  : "var(--danger)",
+                            animation:
+                              e.status === "running"
+                                ? "pulse-dot 1.5s ease-in-out infinite"
+                                : "none",
+                          }}
+                        />
+                        <span className="audit-action">{e.action}</span>
+                      </div>
+                      <span className="audit-time">{e.time}</span>
+                    </summary>
+                    <div className="audit-entry-details">
+                      <div className="audit-meta-row">
+                        <span>event</span>
+                        <span>{e.eventType}</span>
+                      </div>
+                      <div className="audit-meta-row">
+                        <span>severity</span>
+                        <span>{e.severity}</span>
+                      </div>
+                      {e.toolName && (
+                        <div className="audit-meta-row">
+                          <span>tool</span>
+                          <span>{e.toolName}</span>
+                        </div>
+                      )}
+                      {e.hash && (
+                        <div className="audit-meta-row">
+                          <span>hash</span>
+                          <span className="audit-hash">{`${e.hash.slice(0, 10)}…${e.hash.slice(-8)}`}</span>
+                        </div>
+                      )}
+                      {e.previousHash && (
+                        <div className="audit-meta-row">
+                          <span>prev</span>
+                          <span className="audit-hash">{`${e.previousHash.slice(0, 10)}…${e.previousHash.slice(-8)}`}</span>
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                ))}
               </div>
             ))
           )}

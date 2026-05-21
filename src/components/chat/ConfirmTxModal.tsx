@@ -5,11 +5,17 @@ import { useAccount, useSendTransaction, useSwitchChain } from "wagmi";
 import { sepolia } from "viem/chains";
 import { parseEther } from "viem";
 import type { TxProposal } from "@/lib/txProposal";
+import { useSpendBudget } from "@/lib/useSpendBudget";
+import { SpendBudgetDashboard } from "./SpendBudgetDashboard";
 
 interface Props {
   proposal: TxProposal;
   onClose: () => void;
   onSubmitted: (hash: `0x${string}`, proposal: TxProposal) => void;
+  onLifecycleChange?: (
+    phase: "signature_requested",
+    proposal: TxProposal,
+  ) => void;
 }
 
 function truncate(addr: string) {
@@ -29,12 +35,28 @@ function toFriendlyTxError(err: unknown): string {
     return "Transaction was cancelled in wallet.";
   }
 
+  if (
+    normalized.includes("connector") ||
+    normalized.includes("not connected") ||
+    normalized.includes("no account") ||
+    normalized.includes("account not found") ||
+    normalized.includes("wallet not connected")
+  ) {
+    return "Wallet session isn’t ready. Please reconnect and try again.";
+  }
+
   return message || "Transaction failed";
 }
 
-export function ConfirmTxModal({ proposal, onClose, onSubmitted }: Props) {
-  const { isConnected, chainId } = useAccount();
+export function ConfirmTxModal({
+  proposal,
+  onClose,
+  onSubmitted,
+  onLifecycleChange,
+}: Props) {
+  const { chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
+  const { getCurrentSpend, checkCanSpend } = useSpendBudget();
   const [error, setError] = useState<string | null>(null);
   const [submittedHash, setSubmittedHash] = useState<
     `0x${string}` | undefined
@@ -51,10 +73,15 @@ export function ConfirmTxModal({ proposal, onClose, onSubmitted }: Props) {
 
   const handleConfirm = useCallback(async () => {
     setError(null);
-    if (!isConnected) {
-      setError("Connect your wallet first.");
+
+    // Check spend budget
+    const amount = parseFloat(proposal.valueEth);
+    const { allowed, reason } = checkCanSpend(amount);
+    if (!allowed) {
+      setError(reason || "Spend budget exceeded");
       return;
     }
+
     if (chainId !== sepolia.id) {
       try {
         setPhase("signing");
@@ -67,6 +94,7 @@ export function ConfirmTxModal({ proposal, onClose, onSubmitted }: Props) {
     }
     try {
       setPhase("signing");
+      onLifecycleChange?.("signature_requested", proposal);
       const hash = await sendTransactionAsync({
         to: proposal.to as `0x${string}`,
         value: parseEther(proposal.valueEth),
@@ -81,18 +109,24 @@ export function ConfirmTxModal({ proposal, onClose, onSubmitted }: Props) {
       setError(toFriendlyTxError(err));
     }
   }, [
-    isConnected,
     chainId,
     switchChainAsync,
     sendTransactionAsync,
     proposal,
     onClose,
     onSubmitted,
+    onLifecycleChange,
+    checkCanSpend,
   ]);
 
   const displayError = error ?? (sendError ? sendError.message : null);
   const busy = isSigning || phase === "submitted";
   const isReady = phase === "ready" && !busy;
+
+  // Check if spend budget allows the transaction
+  const amount = parseFloat(proposal.valueEth);
+  const { allowed: canSpend } = checkCanSpend(amount);
+  const canConfirm = isReady && canSpend;
 
   const getButtonText = () => {
     if (phase === "signing") {
@@ -138,6 +172,12 @@ export function ConfirmTxModal({ proposal, onClose, onSubmitted }: Props) {
             <span className="tx-value success">Passed</span>
           </div>
         </div>
+
+        {/* Spend Budget Dashboard */}
+        <SpendBudgetDashboard
+          status={getCurrentSpend()}
+          proposedAmount={parseFloat(proposal.valueEth)}
+        />
 
         {/* Status during signing */}
         {phase !== "ready" && (
@@ -192,8 +232,8 @@ export function ConfirmTxModal({ proposal, onClose, onSubmitted }: Props) {
             type="button"
             className="btn-primary"
             onClick={handleConfirm}
-            disabled={!isReady}
-            aria-disabled={!isReady}
+            disabled={!canConfirm}
+            aria-disabled={!canConfirm}
           >
             {phase === "signing" || phase === "submitted" ? (
               <>

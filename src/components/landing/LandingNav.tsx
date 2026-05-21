@@ -118,7 +118,7 @@ export function LandingNav({ onOpenWorkspace }: Props) {
           <button
             type="button"
             className="btn-primary nav-mobile-cta"
-            onClick={() => { handleNavClick(); onOpenWorkspace(); }}
+            onClick={() => { handleNavClick(""); onOpenWorkspace(); }}
           >
             Try Ledgr
           </button>

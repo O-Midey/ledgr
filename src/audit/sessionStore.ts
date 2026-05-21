@@ -28,5 +28,10 @@ export function formatAuditForSidebar(entries: readonly AuditEntry[]) {
           : e.eventType.includes("START") || e.eventType.includes("SIMULATION")
             ? ("running" as const)
             : ("success" as const),
+      eventType: e.eventType,
+      severity: e.severity,
+      toolName: e.toolName,
+      hash: e.hash,
+      previousHash: e.previousHash,
     }));
 }
