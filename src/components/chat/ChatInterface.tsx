@@ -21,7 +21,8 @@ import {
 import { ConfirmTxModal } from "./ConfirmTxModal";
 import { AddressBookPanel } from "./AddressBookPanel";
 import { AddressSuggestions } from "./AddressSuggestions";
-import { ContextualChips } from "./ContextualChips";
+import { ContextualChips, type SuggestionChip } from "./ContextualChips";
+import { QuickActionCard } from "./QuickActionCard";
 import type { AddressAlias } from "@/lib/useAddressBook";
 import { isTxProposalOutput, type TxProposal } from "@/lib/txProposal";
 import { formatAuditForSidebar } from "@/audit/sessionStore";
@@ -112,6 +113,12 @@ interface LocalTxNotice {
   txFeeEth?: string;
 }
 
+interface QuickActionDraft {
+  mode: "send" | "gas";
+  initialAddress?: string;
+  initialAmount?: string;
+}
+
 function receiptMetrics(receipt: unknown): {
   blockNumber?: string;
   gasUsed?: string;
@@ -177,6 +184,8 @@ export function ChatInterface() {
   const [serverAudit, setServerAudit] = useState<AuditEntry[]>([]);
   const [txStatus, setTxStatus] = useState<TxBackgroundStatus | null>(null);
   const [txNotices, setTxNotices] = useState<LocalTxNotice[]>([]);
+  const [quickActionDraft, setQuickActionDraft] =
+    useState<QuickActionDraft | null>(null);
   const retriedRef = useRef(false);
   const notifiedTxHashRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -244,6 +253,7 @@ export function ChatInterface() {
 
       retriedRef.current = false;
       setShowRetry(false);
+      setQuickActionDraft(null);
       setInput("");
       isNearBottomRef.current = true;
 
@@ -257,6 +267,31 @@ export function ChatInterface() {
       );
     },
     [isWrongNetwork, isLoading, sendMessage, address],
+  );
+
+  const handleContextualChip = useCallback(
+    (chip: SuggestionChip) => {
+      if (chip.kind === "send-form") {
+        setQuickActionDraft({
+          mode: "send",
+          initialAddress: chip.initialAddress,
+          initialAmount: chip.initialAmount,
+        });
+        return;
+      }
+
+      if (chip.kind === "gas-form") {
+        setQuickActionDraft({
+          mode: "gas",
+          initialAddress: chip.initialAddress,
+          initialAmount: chip.initialAmount,
+        });
+        return;
+      }
+
+      void submitPrompt(chip.action);
+    },
+    [submitPrompt],
   );
 
   const handleSubmit = useCallback(
@@ -321,7 +356,10 @@ export function ChatInterface() {
 
   useEffect(() => {
     if (status === "ready" || status === "streaming") {
-      refreshAudit();
+      const timeoutId = window.setTimeout(() => {
+        void refreshAudit();
+      }, 0);
+      return () => window.clearTimeout(timeoutId);
     }
   }, [status, messages, refreshAudit]);
 
@@ -460,7 +498,7 @@ export function ChatInterface() {
       });
     }, 5000); // Check every 5s
     return () => clearInterval(checkStuck);
-  }, [txStatus?.phase]);
+  }, [txStatus]);
 
   useEffect(() => {
     if (!txStatus || txStatus.phase !== "confirming") return;
@@ -469,22 +507,24 @@ export function ChatInterface() {
 
     if (txReceipt?.status === "reverted") {
       const metrics = receiptMetrics(txReceipt);
-      setTxStatus((prev) => (prev ? { ...prev, phase: "reverted" } : prev));
-      if (txStatus.hash && notifiedTxHashRef.current !== txStatus.hash) {
-        notifiedTxHashRef.current = txStatus.hash;
-        setTxNotices((prev) => [
-          ...prev,
-          {
-            id: `failed-${txStatus.hash}`,
-            status: "reverted",
-            hash: txStatus.hash as `0x${string}`,
-            to: txStatus.to,
-            valueEth: txStatus.valueEth,
-            ...metrics,
-          },
-        ]);
-      }
-      return;
+      const timeoutId = window.setTimeout(() => {
+        setTxStatus((prev) => (prev ? { ...prev, phase: "reverted" } : prev));
+        if (txStatus.hash && notifiedTxHashRef.current !== txStatus.hash) {
+          notifiedTxHashRef.current = txStatus.hash;
+          setTxNotices((prev) => [
+            ...prev,
+            {
+              id: `failed-${txStatus.hash}`,
+              status: "reverted",
+              hash: txStatus.hash as `0x${string}`,
+              to: txStatus.to,
+              valueEth: txStatus.valueEth,
+              ...metrics,
+            },
+          ]);
+        }
+      }, 0);
+      return () => window.clearTimeout(timeoutId);
     }
 
     let cancelled = false;
@@ -540,20 +580,23 @@ export function ChatInterface() {
     if (!txStatus || txStatus.phase !== "confirming") return;
     if (!txStatus.hash) return;
     if (!txFailed) return;
-    setTxStatus((prev) => (prev ? { ...prev, phase: "failed" } : prev));
-    if (txStatus.hash && notifiedTxHashRef.current !== txStatus.hash) {
-      notifiedTxHashRef.current = txStatus.hash;
-      setTxNotices((prev) => [
-        ...prev,
-        {
-          id: `failed-${txStatus.hash}`,
-          status: "failed",
-          hash: txStatus.hash as `0x${string}`,
-          to: txStatus.to,
-          valueEth: txStatus.valueEth,
-        },
-      ]);
-    }
+    const timeoutId = window.setTimeout(() => {
+      setTxStatus((prev) => (prev ? { ...prev, phase: "failed" } : prev));
+      if (txStatus.hash && notifiedTxHashRef.current !== txStatus.hash) {
+        notifiedTxHashRef.current = txStatus.hash;
+        setTxNotices((prev) => [
+          ...prev,
+          {
+            id: `failed-${txStatus.hash}`,
+            status: "failed",
+            hash: txStatus.hash as `0x${string}`,
+            to: txStatus.to,
+            valueEth: txStatus.valueEth,
+          },
+        ]);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [txFailed, txStatus]);
 
   const handleTxSubmitted = useCallback(
@@ -669,7 +712,7 @@ export function ChatInterface() {
                   {isLastAssistant && !isStreaming && (
                     <ContextualChips
                       messageText={textContent}
-                      onChipClick={submitPrompt}
+                      onChipClick={handleContextualChip}
                       disabled={isLoading || isWrongNetwork}
                     />
                   )}
@@ -754,6 +797,17 @@ export function ChatInterface() {
               <div className="network-warning">
                 Switch to Sepolia to send messages
               </div>
+            )}
+
+            {quickActionDraft && (
+              <QuickActionCard
+                mode={quickActionDraft.mode}
+                initialAddress={quickActionDraft.initialAddress}
+                initialAmount={quickActionDraft.initialAmount}
+                disabled={isLoading || isWrongNetwork}
+                onCancel={() => setQuickActionDraft(null)}
+                onSubmit={submitPrompt}
+              />
             )}
 
             {!hasMessages && (
