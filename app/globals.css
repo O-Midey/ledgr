@@ -2429,6 +2429,33 @@ summary:focus-visible {
   border: 1px solid rgba(239, 68, 68, 0.2);
   border-radius: 8px;
 }
+.chat-error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(100%, 560px);
+  padding: 12px 14px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 12px;
+}
+.chat-error-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.chat-error-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+}
+.chat-error-message {
+  font-size: 12px;
+  color: var(--text-2);
+  word-break: break-word;
+}
 
 .sidebar-toggle-btn,
 .sidebar-close-btn,

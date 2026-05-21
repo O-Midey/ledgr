@@ -118,13 +118,21 @@ export async function POST(request: Request) {
     });
   }
 
-  let body: { messages?: IncomingMessage[] };
+  let body: {
+    messages?: IncomingMessage[];
+    connectedAddress?: string;
+  };
   try {
     body = await request.json();
   } catch {
     return new Response("Bad Request", { status: 400 });
   }
 
+  const bodyConnectedAddress =
+    typeof body.connectedAddress === "string" && body.connectedAddress.trim()
+      ? body.connectedAddress.trim()
+      : null;
+  const effectiveConnectedAddress = bodyConnectedAddress ?? connectedAddress;
   const uiMessages = body.messages ?? [];
   const normalizedMessages = uiMessages.map(normalizeToUiMessage);
 
@@ -168,8 +176,8 @@ export async function POST(request: Request) {
   }
 
   const now = new Date().toUTCString();
-  const walletContext = connectedAddress
-    ? `The user's connected wallet address is: ${connectedAddress}. Use it automatically when they say "my wallet", "my balance", "my address", etc.`
+  const walletContext = effectiveConnectedAddress
+    ? `The user's connected wallet address is: ${effectiveConnectedAddress}. Use it automatically when they say "my wallet", "my balance", "my address", etc.`
     : "No wallet is currently connected.";
   const dynamicSystem = `${SYSTEM_PROMPT}\n\n## Current Context\n- Date/Time (UTC): ${now}\n- ${walletContext}`;
 
@@ -198,7 +206,7 @@ export async function POST(request: Request) {
         description: "Estimate gas cost for sending ETH on Sepolia.",
         inputSchema: z.object({ to: addressSchema, value: ethAmountSchema }),
         execute: async ({ to, value }: { to: string; value: number }) => {
-          const from = resolveFromAddress(connectedAddress);
+          const from = resolveFromAddress(effectiveConnectedAddress);
           const tc = buildToolCall({
             toolName: "estimateGas",
             input: { from, to, valueEth: String(value) },
@@ -294,7 +302,7 @@ export async function POST(request: Request) {
           memo?: string;
           idempotencyKey: string;
         }) => {
-          if (!connectedAddress) {
+          if (!effectiveConnectedAddress) {
             return {
               error:
                 "Connect your wallet to send transactions. Simulation and signing require your connected address.",
@@ -307,7 +315,7 @@ export async function POST(request: Request) {
               valueEth: String(value),
               memo,
               idempotencyKey,
-              from: connectedAddress,
+              from: effectiveConnectedAddress,
             },
             sideEffects: true,
             idempotencyKey,

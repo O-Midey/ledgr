@@ -27,27 +27,6 @@ import { isTxProposalOutput, type TxProposal } from "@/lib/txProposal";
 import { formatAuditForSidebar } from "@/audit/sessionStore";
 import { generateId } from "@/lib/utils";
 
-function buildTransport(
-  sessionId: string,
-  getConnectedAddress: () => string | undefined,
-) {
-  return new DefaultChatTransport({
-    api: "/api/chat",
-    headers: { "x-session-id": sessionId },
-    prepareSendMessagesRequest: ({ body, headers }) => {
-      const connectedAddress = getConnectedAddress();
-      return {
-        body: body || {},
-        headers: {
-          ...(headers as Record<string, string>),
-          "x-session-id": sessionId,
-          ...(connectedAddress ? { "x-wallet-address": connectedAddress } : {}),
-        },
-      };
-    },
-  });
-}
-
 function findPendingProposal(
   messages: { role: string; parts: unknown[] }[],
   dismissed: Set<string>,
@@ -77,6 +56,18 @@ const SUGGESTIONS = [
 
 function formatTime(date: Date) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+
+  return "The request did not complete. Please try again.";
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -163,14 +154,12 @@ export function ChatInterface() {
   });
 
   const sessionId = useMemo(() => generateId(), []);
-  const connectedAddressRef = useRef<string | undefined>(address);
-
-  useEffect(() => {
-    connectedAddressRef.current = address;
-  }, [address]);
-
   const transport = useMemo(
-    () => buildTransport(sessionId, () => connectedAddressRef.current),
+    () =>
+      new DefaultChatTransport({
+        api: "/api/chat",
+        headers: { "x-session-id": sessionId },
+      }),
     [sessionId],
   );
   const { messages, sendMessage, status, error, regenerate } = useChat({
@@ -193,12 +182,15 @@ export function ChatInterface() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isNearBottomRef = useRef(true);
+  const lastMessageCountRef = useRef(0);
 
   const isLoading = status === "streaming" || status === "submitted";
   const isStreaming = status === "streaming";
   const lastIsUser =
     messages.length > 0 && messages[messages.length - 1].role === "user";
   const showThinking = status === "submitted" && lastIsUser;
+  const requestErrorMessage = error ? getErrorMessage(error) : "";
+  const shouldShowRetry = showRetry && !!error;
 
   // ── Smart auto-scroll: only if user is near bottom ──
   const handleScroll = useCallback(() => {
@@ -208,14 +200,24 @@ export function ChatInterface() {
       el.scrollHeight - el.scrollTop - el.clientHeight < 120;
   }, []);
 
-  useEffect(() => {
-    if (isNearBottomRef.current) {
-      scrollRef.current?.scrollTo({
-        top: scrollRef.current.scrollHeight,
-        behavior: "smooth",
-      });
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.deltaY < 0) {
+      isNearBottomRef.current = false;
     }
-  }, [messages, showThinking]);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    const hasNewMessage = messages.length !== lastMessageCountRef.current;
+    lastMessageCountRef.current = messages.length;
+
+    if (!el || !isNearBottomRef.current) return;
+
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: hasNewMessage && !isStreaming ? "smooth" : "auto",
+    });
+  }, [messages, showThinking, isStreaming]);
 
   // ── Auto-retry on error ──
   useEffect(() => {
@@ -240,11 +242,20 @@ export function ChatInterface() {
       e?.preventDefault();
       if (!input.trim() || isWrongNetwork || isLoading) return;
       const text = input;
+      retriedRef.current = false;
+      setShowRetry(false);
       setInput("");
       isNearBottomRef.current = true;
-      await sendMessage({ text });
+      await sendMessage(
+        { text },
+        {
+          body: {
+            connectedAddress: address,
+          },
+        },
+      );
     },
-    [input, isWrongNetwork, isLoading, sendMessage],
+    [input, isWrongNetwork, isLoading, sendMessage, address],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -594,7 +605,12 @@ export function ChatInterface() {
         {showRetry ? "Request failed. Retry is available." : ""}
       </div>
       <div className="chat-column">
-        <div className="chat-messages" ref={scrollRef} onScroll={handleScroll}>
+        <div
+          className="chat-messages"
+          ref={scrollRef}
+          onScroll={handleScroll}
+          onWheel={handleWheel}
+        >
           {/* Empty state */}
           {!hasMessages && (
             <div className="empty-state animate-fade-in">
@@ -680,33 +696,45 @@ export function ChatInterface() {
           )}
 
           {/* Retry */}
-          {showRetry && (
+          {shouldShowRetry && (
             <div className="msg-row assistant">
-              <button
-                className="retry-btn"
-                onClick={() => {
-                  retriedRef.current = false;
-                  setShowRetry(false);
-                  regenerate();
-                }}
+              <div
+                className="chat-error-banner"
+                role="alert"
+                aria-live="assertive"
               >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path
-                    d="M2 6C2 3.8 3.8 2 6 2C7.4 2 8.6 2.7 9.3 3.8M10 6C10 8.2 8.2 10 6 10C4.6 10 3.4 9.3 2.7 8.2"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                  />
-                  <path
-                    d="M9 1.5V4H11.5"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                Request failed — click to retry
-              </button>
+                <div className="chat-error-copy">
+                  <div className="chat-error-title">Request failed</div>
+                  <div className="chat-error-message">
+                    {requestErrorMessage}
+                  </div>
+                </div>
+                <button
+                  className="retry-btn"
+                  onClick={() => {
+                    retriedRef.current = false;
+                    setShowRetry(false);
+                    regenerate();
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path
+                      d="M2 6C2 3.8 3.8 2 6 2C7.4 2 8.6 2.7 9.3 3.8M10 6C10 8.2 8.2 10 6 10C4.6 10 3.4 9.3 2.7 8.2"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                    />
+                    <path
+                      d="M9 1.5V4H11.5"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  Retry request
+                </button>
+              </div>
             </div>
           )}
 
