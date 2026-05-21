@@ -2197,6 +2197,10 @@ a {
   border-color: var(--border-strong);
   color: var(--text);
 }
+.suggestion-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 .empty-state {
   display: flex;
@@ -3324,6 +3328,16 @@ summary:focus-visible {
 
 .contextual-chip:active {
   transform: translateY(0);
+}
+.contextual-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+.contextual-chip:disabled:hover {
+  background: var(--s1);
+  border-color: rgba(0, 212, 170, 0.2);
+  color: var(--text-2);
 }
 
 .chip-icon {

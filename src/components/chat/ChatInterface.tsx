@@ -237,17 +237,18 @@ export function ChatInterface() {
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 36), 160)}px`;
   }, [input]);
 
-  const handleSubmit = useCallback(
-    async (e?: React.FormEvent) => {
-      e?.preventDefault();
-      if (!input.trim() || isWrongNetwork || isLoading) return;
-      const text = input;
+  const submitPrompt = useCallback(
+    async (text: string) => {
+      const normalizedText = text.trim();
+      if (!normalizedText || isWrongNetwork || isLoading) return;
+
       retriedRef.current = false;
       setShowRetry(false);
       setInput("");
       isNearBottomRef.current = true;
+
       await sendMessage(
-        { text },
+        { text: normalizedText },
         {
           body: {
             connectedAddress: address,
@@ -255,7 +256,15 @@ export function ChatInterface() {
         },
       );
     },
-    [input, isWrongNetwork, isLoading, sendMessage, address],
+    [isWrongNetwork, isLoading, sendMessage, address],
+  );
+
+  const handleSubmit = useCallback(
+    async (e?: React.FormEvent) => {
+      e?.preventDefault();
+      await submitPrompt(input);
+    },
+    [input, submitPrompt],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -660,10 +669,8 @@ export function ChatInterface() {
                   {isLastAssistant && !isStreaming && (
                     <ContextualChips
                       messageText={textContent}
-                      onChipClick={(action) => {
-                        setInput(action);
-                        setTimeout(() => textareaRef.current?.focus(), 0);
-                      }}
+                      onChipClick={submitPrompt}
+                      disabled={isLoading || isWrongNetwork}
                     />
                   )}
                 </div>
@@ -756,7 +763,10 @@ export function ChatInterface() {
                     key={s}
                     type="button"
                     className="suggestion-chip"
-                    onClick={() => setInput(s)}
+                    disabled={isLoading || isWrongNetwork}
+                    onClick={() => {
+                      void submitPrompt(s);
+                    }}
                   >
                     {s}
                   </button>

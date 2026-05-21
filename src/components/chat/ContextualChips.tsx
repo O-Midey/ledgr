@@ -12,6 +12,7 @@ export interface SuggestionChip {
 export interface ContextualChipsProps {
   messageText: string;
   onChipClick: (action: string) => void;
+  disabled?: boolean;
 }
 
 // Pattern detection for different response types
@@ -160,6 +161,7 @@ function getChipsForPattern(pattern: string): SuggestionChip[] {
 export function ContextualChips({
   messageText,
   onChipClick,
+  disabled = false,
 }: ContextualChipsProps) {
   const chips = useMemo(() => {
     const pattern = detectResponsePattern(messageText);
@@ -179,6 +181,8 @@ export function ContextualChips({
           <button
             key={idx}
             className="contextual-chip"
+            type="button"
+            disabled={disabled}
             onClick={() => onChipClick(chip.action)}
             title={chip.description}
             aria-label={`${chip.label}: ${chip.description}`}
