@@ -50,6 +50,7 @@ const addressSchema = z
 const ethAmountSchema = z.number().positive().finite().max(0.1);
 
 type IncomingMessage = {
+  id?: string;
   role: string;
   content?: string;
   parts?: Array<{ type?: string; text?: string; [key: string]: unknown }>;
@@ -69,6 +70,19 @@ function extractMessageText(message: IncomingMessage): string {
   }
 
   return "";
+}
+
+function normalizeToUiMessage(message: IncomingMessage, index: number) {
+  if (Array.isArray(message.parts)) {
+    return message;
+  }
+
+  const text = extractMessageText(message);
+  return {
+    ...message,
+    id: message.id ?? `m-${index}`,
+    parts: text ? [{ type: "text", text }] : [],
+  };
 }
 
 /** Unwrap ExecutionResult so the model sees clean data, not internal metadata. */
@@ -93,8 +107,7 @@ export async function POST(request: Request) {
   // 1. Rate limiting -- applied first
   const ip = request.headers.get("x-forwarded-for") ?? "127.0.0.1";
   const connectedAddress = request.headers.get("x-wallet-address") ?? null;
-  const sessionId =
-    request.headers.get("x-session-id")?.trim() || generateId();
+  const sessionId = request.headers.get("x-session-id")?.trim() || generateId();
   const rateResult = checkRateLimit(ip);
   if (!rateResult.allowed) {
     return new Response("Too Many Requests", {
@@ -113,6 +126,7 @@ export async function POST(request: Request) {
   }
 
   const uiMessages = body.messages ?? [];
+  const normalizedMessages = uiMessages.map(normalizeToUiMessage);
 
   const auditLog = new AuditLog(sessionId);
   const gateway = new ExecutionGateway(auditLog);
@@ -142,8 +156,16 @@ export async function POST(request: Request) {
   }
 
   // 3. Stream -- all tool calls route through ExecutionGateway
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const modelMessages = await convertToModelMessages(uiMessages as any);
+  let modelMessages: Awaited<ReturnType<typeof convertToModelMessages>>;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    modelMessages = await convertToModelMessages(normalizedMessages as any);
+  } catch {
+    return Response.json(
+      { error: "Invalid chat message format." },
+      { status: 400 },
+    );
+  }
 
   const now = new Date().toUTCString();
   const walletContext = connectedAddress
