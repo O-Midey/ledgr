@@ -1,11 +1,6 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  turbopack: {
-    resolveAlias: {
-      "@react-native-async-storage/async-storage": false,
-    },
-  },
   webpack: (config) => {
     config.resolve = config.resolve || {};
     config.resolve.alias = {

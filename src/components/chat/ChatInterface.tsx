@@ -37,7 +37,7 @@ function buildTransport(
     prepareSendMessagesRequest: ({ body, headers }) => {
       const connectedAddress = getConnectedAddress();
       return {
-        body,
+        body: body || {},
         headers: {
           ...(headers as Record<string, string>),
           "x-session-id": sessionId,
@@ -457,7 +457,7 @@ export function ChatInterface() {
           {
             id: `failed-${txStatus.hash}`,
             status: "reverted",
-            hash: txStatus.hash,
+            hash: txStatus.hash as `0x${string}`,
             to: txStatus.to,
             valueEth: txStatus.valueEth,
             ...metrics,
@@ -500,7 +500,7 @@ export function ChatInterface() {
             {
               id: `confirmed-${txStatus.hash}`,
               status: "confirmed",
-              hash: txStatus.hash,
+              hash: txStatus.hash as `0x${string}`,
               to: txStatus.to,
               valueEth: txStatus.valueEth,
               ...metrics,
@@ -528,7 +528,7 @@ export function ChatInterface() {
         {
           id: `failed-${txStatus.hash}`,
           status: "failed",
-          hash: txStatus.hash,
+          hash: txStatus.hash as `0x${string}`,
           to: txStatus.to,
           valueEth: txStatus.valueEth,
         },
