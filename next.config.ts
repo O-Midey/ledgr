@@ -29,7 +29,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: https:",
-              "connect-src 'self' https://*.alchemyapi.io https://*.g.alchemy.com wss://*.g.alchemy.com https://api.coingecko.com https://pulse.walletconnect.org https://api.web3modal.org https://rpc.walletconnect.com wss://relay.walletconnect.com https://*.rpc.thirdweb.com https://rpc.thirdweb.com",
+              "connect-src 'self' https://*.alchemyapi.io https://*.g.alchemy.com wss://*.g.alchemy.com https://api.coingecko.com https://pulse.walletconnect.org https://api.web3modal.org https://rpc.walletconnect.com wss://relay.walletconnect.com https://ethereum-sepolia-rpc.publicnode.com https://*.rpc.thirdweb.com https://rpc.thirdweb.com",
               "frame-ancestors 'none'",
             ].join("; "),
           },
