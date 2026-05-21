@@ -78,7 +78,10 @@ interface TxBackgroundStatus {
 
 interface LocalTxNotice {
   id: string;
-  text: string;
+  status: "confirmed" | "failed";
+  hash: `0x${string}`;
+  to: string;
+  valueEth: string;
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
@@ -249,20 +252,40 @@ export function ChatInterface() {
 
   const hasMessages = messages.length > 0;
 
-  const { isSuccess: txConfirmed, isError: txFailed } =
-    useWaitForTransactionReceipt({
-      hash: txStatus?.hash,
-      chainId: sepolia.id,
-      query: {
-        enabled: txStatus?.status === "confirming",
-        pollingInterval: 1200,
-        retry: 5,
-      },
-    });
+  const {
+    isSuccess: txConfirmed,
+    isError: txFailed,
+    data: txReceipt,
+  } = useWaitForTransactionReceipt({
+    hash: txStatus?.hash,
+    chainId: sepolia.id,
+    query: {
+      enabled: txStatus?.status === "confirming",
+      retry: 5,
+    },
+  });
 
   useEffect(() => {
     if (!txStatus || txStatus.status !== "confirming") return;
     if (!txConfirmed) return;
+
+    if (txReceipt?.status === "reverted") {
+      setTxStatus((prev) => (prev ? { ...prev, status: "failed" } : prev));
+      if (notifiedTxHashRef.current !== txStatus.hash) {
+        notifiedTxHashRef.current = txStatus.hash;
+        setTxNotices((prev) => [
+          ...prev,
+          {
+            id: `failed-${txStatus.hash}`,
+            status: "failed",
+            hash: txStatus.hash,
+            to: txStatus.to,
+            valueEth: txStatus.valueEth,
+          },
+        ]);
+      }
+      return;
+    }
 
     let cancelled = false;
 
@@ -295,12 +318,10 @@ export function ChatInterface() {
             ...prev,
             {
               id: `confirmed-${txStatus.hash}`,
-              text:
-                `✅ Transaction confirmed on Sepolia.\n\n` +
-                `• Amount: ${txStatus.valueEth} ETH\n` +
-                `• Recipient: ${txStatus.to}\n` +
-                `• Hash: ${txStatus.hash}\n` +
-                `• Explorer: https://sepolia.etherscan.io/tx/${txStatus.hash}`,
+              status: "confirmed",
+              hash: txStatus.hash,
+              to: txStatus.to,
+              valueEth: txStatus.valueEth,
             },
           ]);
         }
@@ -311,7 +332,7 @@ export function ChatInterface() {
     return () => {
       cancelled = true;
     };
-  }, [txConfirmed, txStatus, sessionId, refreshAudit]);
+  }, [txConfirmed, txStatus, txReceipt, sessionId, refreshAudit]);
 
   useEffect(() => {
     if (!txStatus || txStatus.status !== "confirming") return;
@@ -323,12 +344,10 @@ export function ChatInterface() {
         ...prev,
         {
           id: `failed-${txStatus.hash}`,
-          text:
-            `⚠️ We couldn't confirm this transaction yet.\n\n` +
-            `• Amount: ${txStatus.valueEth} ETH\n` +
-            `• Recipient: ${txStatus.to}\n` +
-            `• Hash: ${txStatus.hash}\n` +
-            `• Check: https://sepolia.etherscan.io/tx/${txStatus.hash}`,
+          status: "failed",
+          hash: txStatus.hash,
+          to: txStatus.to,
+          valueEth: txStatus.valueEth,
         },
       ]);
     }
@@ -408,12 +427,7 @@ export function ChatInterface() {
 
           {txNotices.map((notice) => (
             <div key={notice.id} className="msg-row assistant">
-              <AssistantMessage
-                content={notice.text}
-                toolParts={[]}
-                isStreaming={false}
-                txStatus={null}
-              />
+              <TxCompletionNotice notice={notice} />
               <div className="msg-timestamp">{formatTime(new Date())}</div>
             </div>
           ))}
@@ -723,6 +737,49 @@ function AssistantMessage({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function TxCompletionNotice({ notice }: { notice: LocalTxNotice }) {
+  const shortTo = `${notice.to.slice(0, 6)}…${notice.to.slice(-4)}`;
+  const shortHash = `${notice.hash.slice(0, 10)}…${notice.hash.slice(-6)}`;
+  const explorer = `https://sepolia.etherscan.io/tx/${notice.hash}`;
+  const isConfirmed = notice.status === "confirmed";
+
+  return (
+    <div
+      className={`tx-preview chat-tx-preview tx-complete-card ${notice.status}`}
+    >
+      <div className="tx-preview-label">
+        {isConfirmed ? "Transaction confirmed" : "Confirmation delayed"}
+      </div>
+
+      <div className="tx-row">
+        <span className="tx-label">Amount</span>
+        <span className="tx-value accent">{notice.valueEth} ETH</span>
+      </div>
+      <div className="tx-row">
+        <span className="tx-label">To</span>
+        <span className="tx-value mono">{shortTo}</span>
+      </div>
+      <div className="tx-row">
+        <span className="tx-label">Hash</span>
+        <a
+          href={explorer}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="tx-value accent mono"
+        >
+          {shortHash}
+        </a>
+      </div>
+
+      <div className={`tx-preview-status ${isConfirmed ? "done" : "error"}`}>
+        {isConfirmed
+          ? "Finalized on Sepolia"
+          : "Still pending on-chain. Open explorer for live status"}
+      </div>
     </div>
   );
 }

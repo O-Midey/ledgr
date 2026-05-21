@@ -3,14 +3,49 @@
 import { useEffect, useState } from "react";
 
 const STEPS = [
-  { tools: ["resolveAddress"], audit: 1, showTx: false, showModal: false, status: "" },
-  { tools: ["resolveAddress", "estimateGas"], audit: 2, showTx: false, showModal: false, status: "" },
-  { tools: ["resolveAddress", "estimateGas", "simulateTx"], audit: 3, showTx: true, showModal: false, status: "" },
-  { tools: ["resolveAddress", "estimateGas", "simulateTx", "sendTransaction"], audit: 5, showTx: true, showModal: true, status: "pending" },
-  { tools: ["resolveAddress", "estimateGas", "simulateTx", "sendTransaction"], audit: 5, showTx: true, showModal: false, status: "confirmed" },
+  {
+    tools: ["resolveAddress"],
+    audit: 1,
+    showTx: false,
+    showModal: false,
+    status: "",
+  },
+  {
+    tools: ["resolveAddress", "estimateGas"],
+    audit: 2,
+    showTx: false,
+    showModal: false,
+    status: "",
+  },
+  {
+    tools: ["resolveAddress", "estimateGas", "simulateTx"],
+    audit: 3,
+    showTx: true,
+    showModal: false,
+    status: "",
+  },
+  {
+    tools: ["resolveAddress", "estimateGas", "simulateTx", "sendTransaction"],
+    audit: 5,
+    showTx: true,
+    showModal: true,
+    status: "pending",
+  },
+  {
+    tools: ["resolveAddress", "estimateGas", "simulateTx", "sendTransaction"],
+    audit: 5,
+    showTx: true,
+    showModal: false,
+    status: "confirmed",
+  },
 ] as const;
 
-const ALL_TOOLS = ["resolveAddress", "estimateGas", "simulateTx", "sendTransaction"];
+const ALL_TOOLS = [
+  "resolveAddress",
+  "estimateGas",
+  "simulateTx",
+  "sendTransaction",
+];
 
 export function ProductMockup() {
   const [step, setStep] = useState(0);
@@ -57,7 +92,11 @@ Running simulation on Sepolia fork`}
             <div className="preview-tools">
               {ALL_TOOLS.map((name) => (
                 <span key={name} className={`tool-badge ${toolState(name)}`}>
-                  {toolState(name) === "done" ? "✓" : toolState(name) === "running" ? "…" : "·"}{" "}
+                  {toolState(name) === "done"
+                    ? "✓"
+                    : toolState(name) === "running"
+                      ? "…"
+                      : "·"}{" "}
                   {name}
                 </span>
               ))}
@@ -91,7 +130,13 @@ Running simulation on Sepolia fork`}
               <span>Ask anything about your wallet…</span>
               <span className="preview-send" aria-hidden>
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                  <path d="M2 5H8M8 5L5.5 2.5M8 5L5.5 7.5" stroke="#0A0A0A" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path
+                    d="M2 5H8M8 5L5.5 2.5M8 5L5.5 7.5"
+                    stroke="#0A0A0A"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               </span>
             </div>
@@ -111,7 +156,9 @@ Running simulation on Sepolia fork`}
               const running = i === s.audit - 1 && s.status === "pending";
               return (
                 <div key={action} className="preview-audit-item">
-                  <span className={`preview-audit-dot ${active ? (running ? "running" : "done") : ""}`} />
+                  <span
+                    className={`preview-audit-dot ${active ? (running ? "running" : "done") : ""}`}
+                  />
                   {action}
                 </div>
               );
@@ -132,14 +179,20 @@ Running simulation on Sepolia fork`}
           <div className="preview-modal">
             <div className="preview-modal-card">
               <div className="preview-modal-title">Confirm transaction</div>
-              <div className="preview-modal-sub">0.05 ETH → vitalik.eth · Sepolia</div>
+              <div className="preview-modal-sub">
+                0.05 ETH → vitalik.eth · Sepolia
+              </div>
               <div className="tx-row">
                 <span className="tx-label">Est. fee</span>
                 <span className="tx-value">$0.87</span>
               </div>
               <div className="preview-modal-actions">
-                <button type="button" className="preview-modal-btn">Cancel</button>
-                <button type="button" className="preview-modal-btn primary">Confirm</button>
+                <button type="button" className="preview-modal-btn">
+                  Cancel
+                </button>
+                <button type="button" className="preview-modal-btn primary">
+                  Confirm
+                </button>
               </div>
             </div>
           </div>
@@ -147,8 +200,12 @@ Running simulation on Sepolia fork`}
       </div>
 
       {s.status && (
-        <div className={`preview-status ${s.status === "confirmed" ? "live" : ""}`}>
-          <span className={`preview-audit-dot ${s.status === "confirmed" ? "done" : "running"}`} />
+        <div
+          className={`preview-status ${s.status === "confirmed" ? "live" : ""}`}
+        >
+          <span
+            className={`preview-audit-dot ${s.status === "confirmed" ? "done" : "running"}`}
+          />
           {s.status === "confirmed"
             ? "0x4f3a…c91b · Confirmed · block 6,842,301"
             : "Broadcasting · waiting for confirmation…"}

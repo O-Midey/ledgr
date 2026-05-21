@@ -16,6 +16,22 @@ function truncate(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
+function toFriendlyTxError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("user rejected") ||
+    normalized.includes("user denied") ||
+    normalized.includes("rejected request") ||
+    normalized.includes("denied transaction")
+  ) {
+    return "Transaction was cancelled in wallet.";
+  }
+
+  return message || "Transaction failed";
+}
+
 export function ConfirmTxModal({ proposal, onClose, onSubmitted }: Props) {
   const { isConnected, chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
@@ -62,7 +78,7 @@ export function ConfirmTxModal({ proposal, onClose, onSubmitted }: Props) {
       onClose();
     } catch (err) {
       setPhase("ready");
-      setError(err instanceof Error ? err.message : "Transaction failed");
+      setError(toFriendlyTxError(err));
     }
   }, [
     isConnected,

@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useRef } from "react";
 import { SectionHeader } from "./SectionHeader";
 
 const pillars = [
@@ -40,8 +43,28 @@ const pillars = [
 ];
 
 export function SecuritySection() {
+  const ref = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const cards = ref.current?.querySelectorAll(".security-card");
+    if (!cards) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            (e.target as HTMLElement).classList.add("in-view");
+            io.unobserve(e.target);
+          }
+        });
+      },
+      { threshold: 0.08, rootMargin: "0px 0px -40px 0px" }
+    );
+    cards.forEach((c) => io.observe(c));
+    return () => io.disconnect();
+  }, []);
+
   return (
-    <section id="security" className="landing-section">
+    <section id="security" className="landing-section" ref={ref}>
       <div className="landing-container">
         <SectionHeader
           label="Security & Reliability"
@@ -55,7 +78,7 @@ export function SecuritySection() {
 
         <div className="security-grid">
           {pillars.map((p) => (
-            <article key={p.num} className="security-card">
+            <article key={p.num} className="security-card scroll-reveal">
               <div className="security-num">{p.num}</div>
               <h3 className="security-title">{p.title}</h3>
               <p className="security-desc">{p.desc}</p>
@@ -64,14 +87,19 @@ export function SecuritySection() {
           ))}
         </div>
 
-        <div className="trust-row">
-          <div>
+        <div className="trust-row scroll-reveal">
+          <div className="trust-text">
             <div className="trust-title">Zero trust. Full transparency.</div>
-            <p className="trust-desc">Every action logged. Every decision traceable. Every execution auditable.</p>
+            <p className="trust-desc">
+              Every action logged. Every decision traceable. Every execution auditable.
+            </p>
           </div>
           <div className="trust-pills">
             {["Simulation", "Audit log", "Typed pipeline", "Supervisor"].map((t) => (
               <span key={t} className="pill success">
+                <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                  <path d="M1.5 4L3.5 6L6.5 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
                 {t}
               </span>
             ))}
