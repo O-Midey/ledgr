@@ -19,6 +19,12 @@ import { ExecutionGateway, buildToolCall } from "@/agent/executionGateway";
 import { SYSTEM_PROMPT } from "@/prompts/systemPrompt";
 import { InjectionDetectedError } from "@/types/errors";
 import { generateId } from "@/lib/utils";
+import { getAgentAddress } from "@/wallet/walletClient";
+
+function resolveFromAddress(connected: string | null): string {
+  if (connected) return connected;
+  return getAgentAddress();
+}
 
 const MAX_STEPS = parseInt(process.env.MAX_STEPS_PER_TURN ?? "10", 10);
 
@@ -87,6 +93,8 @@ export async function POST(request: Request) {
   // 1. Rate limiting -- applied first
   const ip = request.headers.get("x-forwarded-for") ?? "127.0.0.1";
   const connectedAddress = request.headers.get("x-wallet-address") ?? null;
+  const sessionId =
+    request.headers.get("x-session-id")?.trim() || generateId();
   const rateResult = checkRateLimit(ip);
   if (!rateResult.allowed) {
     return new Response("Too Many Requests", {
@@ -106,7 +114,6 @@ export async function POST(request: Request) {
 
   const uiMessages = body.messages ?? [];
 
-  const sessionId = generateId();
   const auditLog = new AuditLog(sessionId);
   const gateway = new ExecutionGateway(auditLog);
 
@@ -169,9 +176,10 @@ export async function POST(request: Request) {
         description: "Estimate gas cost for sending ETH on Sepolia.",
         inputSchema: z.object({ to: addressSchema, value: ethAmountSchema }),
         execute: async ({ to, value }: { to: string; value: number }) => {
+          const from = resolveFromAddress(connectedAddress);
           const tc = buildToolCall({
             toolName: "estimateGas",
-            input: { to, value },
+            input: { from, to, valueEth: String(value) },
             sideEffects: false,
           });
           const res = await gateway.execute(tc);
@@ -264,13 +272,25 @@ export async function POST(request: Request) {
           memo?: string;
           idempotencyKey: string;
         }) => {
+          if (!connectedAddress) {
+            return {
+              error:
+                "Connect your wallet to send transactions. Simulation and signing require your connected address.",
+            };
+          }
           const tc = buildToolCall({
             toolName: "sendTransaction",
-            input: { to, value, memo },
+            input: {
+              to,
+              valueEth: String(value),
+              memo,
+              idempotencyKey,
+              from: connectedAddress,
+            },
             sideEffects: true,
             idempotencyKey,
           });
-          const res = await gateway.execute(tc);
+          const res = await gateway.propose(tc);
           return unwrapResult(
             JSON.parse(sanitizeToolOutput(safeStringify(res))),
           );
@@ -290,5 +310,6 @@ export async function POST(request: Request) {
   const stream = result.toUIMessageStreamResponse();
   const headers = new Headers(stream.headers);
   headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("X-Session-Id", sessionId);
   return new Response(stream.body, { status: stream.status, headers });
 }

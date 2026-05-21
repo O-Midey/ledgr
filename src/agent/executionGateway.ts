@@ -216,6 +216,117 @@ export class ExecutionGateway {
     return result;
   }
 
+  /**
+   * Run validation, simulation, and supervisor for a side-effectful call,
+   * then return a client-signed proposal instead of executing on-server.
+   */
+  async propose<T = unknown>(call: ToolCall): Promise<ExecutionResult<T>> {
+    if (!call.sideEffects) {
+      return this.execute<T>(call);
+    }
+
+    const startedAt = nowMs();
+
+    if (call.idempotencyKey) {
+      const cached = idempotencyStore.get(call.idempotencyKey);
+      if (cached) {
+        return { ...(cached as ExecutionResult<T>), status: "idempotency_hit" };
+      }
+    }
+
+    let tool: ReturnType<typeof toolRouter.resolve>;
+    try {
+      tool = toolRouter.resolve(call.toolName);
+    } catch (err) {
+      return this.buildFailResult<T>(call, err, startedAt, false);
+    }
+
+    try {
+      verifier.validateSchema(tool, call.input);
+    } catch (err) {
+      return this.buildFailResult<T>(call, err, startedAt, false);
+    }
+
+    try {
+      verifier.checkPreconditions(call.toolName, call.input);
+    } catch (err) {
+      return this.buildFailResult<T>(call, err, startedAt, false);
+    }
+
+    let simulationPassed = false;
+    if ("simulate" in tool && typeof tool.simulate === "function") {
+      try {
+        await tool.simulate(call.input);
+        simulationPassed = true;
+        await this.auditLog.append({
+          eventType: "SIMULATION_PASSED",
+          severity: "info",
+          toolName: call.toolName,
+          context: { callId: call.callId, mode: "propose" },
+        });
+      } catch (err) {
+        await this.auditLog.append({
+          eventType: "SIMULATION_FAILED",
+          severity: "error",
+          toolName: call.toolName,
+          executionStatus: "failed",
+          context: { callId: call.callId, error: String(err) },
+        });
+        toolRouter.recordFailure(call.toolName);
+        return this.buildFailResult<T>(call, err, startedAt, false);
+      }
+    }
+
+    try {
+      verifier.approveSimulation(call.toolName, null);
+    } catch (err) {
+      return this.buildFailResult<T>(call, err, startedAt, simulationPassed);
+    }
+
+    try {
+      safetySupervisor.approve({
+        toolName: call.toolName,
+        input: call.input,
+        simulationPassed,
+      });
+      await this.auditLog.append({
+        eventType: "SUPERVISOR_APPROVED",
+        severity: "info",
+        toolName: call.toolName,
+        context: { callId: call.callId, pendingConfirmation: true },
+      });
+    } catch (err) {
+      await this.auditLog.append({
+        eventType: "SUPERVISOR_VETOED",
+        severity: "warn",
+        toolName: call.toolName,
+        executionStatus: "vetoed",
+        context: { callId: call.callId },
+      });
+      return this.buildVetoResult<T>(call, err, startedAt, simulationPassed);
+    }
+
+    const proposal = {
+      pendingConfirmation: true,
+      proposal: {
+        ...call.input,
+        callId: call.callId,
+        idempotencyKey: call.idempotencyKey,
+      },
+    };
+
+    return {
+      callId: call.callId,
+      toolName: call.toolName,
+      status: "success",
+      output: proposal as T,
+      simulationPassed,
+      idempotencyKey: call.idempotencyKey,
+      executedAt: startedAt,
+      durationMs: nowMs() - startedAt,
+    };
+  }
+
   private buildFailResult<T>(
     call: ToolCall,
     err: unknown,

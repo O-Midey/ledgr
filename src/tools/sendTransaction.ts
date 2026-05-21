@@ -31,21 +31,26 @@ export const sendTransactionSchema = z.object({
     .regex(/^[\w\s.,!?'-]*$/, "Memo contains invalid characters")
     .optional(),
   idempotencyKey: z.string().trim().min(1).max(128),
+  from: z
+    .string()
+    .trim()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .refine(isAddress, "Invalid from address")
+    .optional(),
 });
 
 export type SendTransactionInput = z.infer<typeof sendTransactionSchema>;
 
 export const sendTransactionTool = {
   name: "sendTransaction" as const,
-  description:
-    "Send ETH on Sepolia from the agent demo wallet to a target address",
+  description: "Send ETH on Sepolia — simulated against the sender wallet before user confirmation",
   schema: sendTransactionSchema,
   idempotent: false, // handled externally by ExecutionGateway
   sideEffects: true,
 
   /** Simulate the transaction. Must be called before execute. */
   async simulate(input: SendTransactionInput): Promise<void> {
-    const from = getAgentAddress();
+    const from = (input.from as Address | undefined) ?? getAgentAddress();
     const to = input.to as Address;
     const value = parseEther(input.valueEth);
 

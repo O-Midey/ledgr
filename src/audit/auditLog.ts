@@ -7,6 +7,7 @@ import type {
 import type { ExecutionStatus } from "@/types/agent";
 import { GENESIS_HASH } from "@/lib/constants";
 import { generateId, nowMs } from "@/lib/utils";
+import { recordAuditEntry } from "./sessionStore";
 
 /**
  * Append-only, hash-chained audit log.
@@ -61,6 +62,7 @@ export class AuditLog {
     Object.freeze(entry);
     this.entries.push(entry);
     this.lastHash = hash;
+    recordAuditEntry(this.sessionId, entry);
 
     return entry;
   }
