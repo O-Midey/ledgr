@@ -2,11 +2,21 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { useChainId, useAccount as useWagmiAccount, useBalance } from "wagmi";
+import {
+  useChainId,
+  useAccount as useWagmiAccount,
+  useBalance,
+  useWaitForTransactionReceipt,
+} from "wagmi";
 import { sepolia } from "viem/chains";
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { ActivityTrace, TxPreviewCard, type ToolUIPart } from "./TxPreviewCard";
+import {
+  ActivityTrace,
+  TxPreviewCard,
+  type ToolUIPart,
+  type TxPreviewStatus,
+} from "./TxPreviewCard";
 import { ConfirmTxModal } from "./ConfirmTxModal";
 import { isTxProposalOutput, type TxProposal } from "@/lib/txProposal";
 import { formatAuditForSidebar } from "@/audit/sessionStore";
@@ -58,6 +68,19 @@ interface AuditEntry {
   duration?: string;
 }
 
+interface TxBackgroundStatus {
+  hash: `0x${string}`;
+  to: string;
+  valueEth: string;
+  idempotencyKey: string;
+  status: "confirming" | "confirmed" | "failed";
+}
+
+interface LocalTxNotice {
+  id: string;
+  text: string;
+}
+
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function ChatInterface() {
@@ -89,7 +112,10 @@ export function ChatInterface() {
   const [serverAudit, setServerAudit] = useState<
     { action: string; time: string; status: "success" | "running" | "error" }[]
   >([]);
+  const [txStatus, setTxStatus] = useState<TxBackgroundStatus | null>(null);
+  const [txNotices, setTxNotices] = useState<LocalTxNotice[]>([]);
   const retriedRef = useRef(false);
+  const notifiedTxHashRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isNearBottomRef = useRef(true);
@@ -223,20 +249,107 @@ export function ChatInterface() {
 
   const hasMessages = messages.length > 0;
 
-  const handleTxConfirmed = useCallback(
-    async (hash: string) => {
+  const { isSuccess: txConfirmed, isError: txFailed } =
+    useWaitForTransactionReceipt({
+      hash: txStatus?.hash,
+      chainId: sepolia.id,
+      query: {
+        enabled: txStatus?.status === "confirming",
+        pollingInterval: 1200,
+        retry: 5,
+      },
+    });
+
+  useEffect(() => {
+    if (!txStatus || txStatus.status !== "confirming") return;
+    if (!txConfirmed) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        await fetch("/api/tx/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId,
+            hash: txStatus.hash,
+            valueEth: txStatus.valueEth,
+            to: txStatus.to,
+            idempotencyKey: txStatus.idempotencyKey,
+          }),
+        });
+      } catch {
+        // Ignore, on-chain confirmation is source of truth.
+      }
+
+      if (!cancelled) {
+        setTxStatus((prev) =>
+          prev && prev.hash === txStatus.hash
+            ? { ...prev, status: "confirmed" }
+            : prev,
+        );
+        if (notifiedTxHashRef.current !== txStatus.hash) {
+          notifiedTxHashRef.current = txStatus.hash;
+          setTxNotices((prev) => [
+            ...prev,
+            {
+              id: `confirmed-${txStatus.hash}`,
+              text:
+                `✅ Transaction confirmed on Sepolia.\n\n` +
+                `• Amount: ${txStatus.valueEth} ETH\n` +
+                `• Recipient: ${txStatus.to}\n` +
+                `• Hash: ${txStatus.hash}\n` +
+                `• Explorer: https://sepolia.etherscan.io/tx/${txStatus.hash}`,
+            },
+          ]);
+        }
+        refreshAudit();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [txConfirmed, txStatus, sessionId, refreshAudit]);
+
+  useEffect(() => {
+    if (!txStatus || txStatus.status !== "confirming") return;
+    if (!txFailed) return;
+    setTxStatus((prev) => (prev ? { ...prev, status: "failed" } : prev));
+    if (notifiedTxHashRef.current !== txStatus.hash) {
+      notifiedTxHashRef.current = txStatus.hash;
+      setTxNotices((prev) => [
+        ...prev,
+        {
+          id: `failed-${txStatus.hash}`,
+          text:
+            `⚠️ We couldn't confirm this transaction yet.\n\n` +
+            `• Amount: ${txStatus.valueEth} ETH\n` +
+            `• Recipient: ${txStatus.to}\n` +
+            `• Hash: ${txStatus.hash}\n` +
+            `• Check: https://sepolia.etherscan.io/tx/${txStatus.hash}`,
+        },
+      ]);
+    }
+  }, [txFailed, txStatus]);
+
+  const handleTxSubmitted = useCallback(
+    (hash: `0x${string}`, proposal: TxProposal) => {
       if (pendingProposal) {
         setDismissedProposals((s) =>
           new Set(s).add(pendingProposal.idempotencyKey),
         );
       }
-      // Show pending state immediately
-      await sendMessage({
-        text: `Transaction submitted and broadcasting to Sepolia. Hash: ${hash}\n\nYou can monitor the status on [Etherscan](https://sepolia.etherscan.io/tx/${hash}) while I wait for confirmation.`,
+      setTxStatus({
+        hash,
+        to: proposal.to,
+        valueEth: proposal.valueEth,
+        idempotencyKey: proposal.idempotencyKey,
+        status: "confirming",
       });
-      refreshAudit();
     },
-    [pendingProposal, sendMessage, refreshAudit],
+    [pendingProposal],
   );
 
   return (
@@ -286,11 +399,24 @@ export function ChatInterface() {
                   content={textContent}
                   toolParts={toolParts}
                   isStreaming={isLastAssistant && isStreaming}
+                  txStatus={txStatus as TxPreviewStatus | null}
                 />
                 <div className="msg-timestamp">{formatTime(new Date())}</div>
               </div>
             );
           })}
+
+          {txNotices.map((notice) => (
+            <div key={notice.id} className="msg-row assistant">
+              <AssistantMessage
+                content={notice.text}
+                toolParts={[]}
+                isStreaming={false}
+                txStatus={null}
+              />
+              <div className="msg-timestamp">{formatTime(new Date())}</div>
+            </div>
+          ))}
 
           {/* Thinking dots */}
           {showThinking && (
@@ -476,13 +602,12 @@ export function ChatInterface() {
       {pendingProposal && !isWrongNetwork && (
         <ConfirmTxModal
           proposal={pendingProposal}
-          sessionId={sessionId}
           onClose={() =>
             setDismissedProposals((s) =>
               new Set(s).add(pendingProposal.idempotencyKey),
             )
           }
-          onConfirmed={handleTxConfirmed}
+          onSubmitted={handleTxSubmitted}
         />
       )}
     </div>
@@ -495,10 +620,12 @@ function AssistantMessage({
   content,
   toolParts,
   isStreaming,
+  txStatus,
 }: {
   content: string;
   toolParts: ToolUIPart[];
   isStreaming: boolean;
+  txStatus: TxPreviewStatus | null;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -552,7 +679,7 @@ function AssistantMessage({
       )}
 
       {previewTools.map((tp) => (
-        <TxPreviewCard key={tp.toolCallId} part={tp} />
+        <TxPreviewCard key={tp.toolCallId} part={tp} txStatus={txStatus} />
       ))}
 
       <ActivityTrace toolParts={toolParts} />

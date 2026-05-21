@@ -1,113 +1,37 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
-import {
-  useAccount,
-  useSendTransaction,
-  useWaitForTransactionReceipt,
-  useSwitchChain,
-} from "wagmi";
+import { useState, useCallback } from "react";
+import { useAccount, useSendTransaction, useSwitchChain } from "wagmi";
 import { sepolia } from "viem/chains";
 import { parseEther } from "viem";
 import type { TxProposal } from "@/lib/txProposal";
-import { txExplorerUrl } from "@/lib/utils";
 
 interface Props {
   proposal: TxProposal;
-  sessionId: string;
   onClose: () => void;
-  onConfirmed: (hash: string) => void;
+  onSubmitted: (hash: `0x${string}`, proposal: TxProposal) => void;
 }
 
 function truncate(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-const CONFIRMATION_TIMEOUT_MS = 120000; // 2 minutes
-
-export function ConfirmTxModal({
-  proposal,
-  sessionId,
-  onClose,
-  onConfirmed,
-}: Props) {
+export function ConfirmTxModal({ proposal, onClose, onSubmitted }: Props) {
   const { isConnected, chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const [error, setError] = useState<string | null>(null);
   const [submittedHash, setSubmittedHash] = useState<
     `0x${string}` | undefined
   >();
-  const [phase, setPhase] = useState<"ready" | "signing" | "confirming">(
+  const [phase, setPhase] = useState<"ready" | "signing" | "submitted">(
     "ready",
   );
-  const confirmTimeoutRef = useRef<NodeJS.Timeout>();
-  const [confirmationStalled, setConfirmationStalled] = useState(false);
 
   const {
     sendTransactionAsync,
     isPending: isSigning,
     error: sendError,
   } = useSendTransaction();
-
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash: submittedHash,
-    chainId: sepolia.id,
-    query: {
-      enabled: !!submittedHash && phase === "confirming",
-      // Poll more frequently initially
-      pollingInterval: submittedHash ? 1000 : undefined,
-      retry: 3,
-      retryDelay: 1000,
-    },
-  });
-
-  // Track confirmation timeout
-  useEffect(() => {
-    if (phase !== "confirming" || !submittedHash) return;
-
-    // Clear any existing timeout
-    if (confirmTimeoutRef.current) {
-      clearTimeout(confirmTimeoutRef.current);
-    }
-
-    confirmTimeoutRef.current = setTimeout(() => {
-      setConfirmationStalled(true);
-    }, CONFIRMATION_TIMEOUT_MS);
-
-    return () => {
-      if (confirmTimeoutRef.current) {
-        clearTimeout(confirmTimeoutRef.current);
-      }
-    };
-  }, [phase, submittedHash]);
-
-  // Handle successful confirmation
-  useEffect(() => {
-    if (!isSuccess || !submittedHash) return;
-
-    if (confirmTimeoutRef.current) {
-      clearTimeout(confirmTimeoutRef.current);
-    }
-
-    (async () => {
-      try {
-        await fetch("/api/tx/confirm", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId,
-            hash: submittedHash,
-            valueEth: proposal.valueEth,
-            to: proposal.to,
-            idempotencyKey: proposal.idempotencyKey,
-          }),
-        });
-      } catch {
-        // Log but don't fail - tx is already on chain
-      }
-      onConfirmed(submittedHash);
-    })();
-  }, [isSuccess, submittedHash, sessionId, proposal, onConfirmed]);
 
   const handleConfirm = useCallback(async () => {
     setError(null);
@@ -133,10 +57,9 @@ export function ConfirmTxModal({
         chainId: sepolia.id,
       });
       setSubmittedHash(hash);
-      setPhase("confirming");
-      setConfirmationStalled(false);
-      // Close modal immediately after tx is submitted
-      setTimeout(() => onClose(), 500);
+      setPhase("submitted");
+      onSubmitted(hash, proposal);
+      onClose();
     } catch (err) {
       setPhase("ready");
       setError(err instanceof Error ? err.message : "Transaction failed");
@@ -148,21 +71,19 @@ export function ConfirmTxModal({
     sendTransactionAsync,
     proposal,
     onClose,
+    onSubmitted,
   ]);
 
   const displayError = error ?? (sendError ? sendError.message : null);
-  const busy = isSigning || isConfirming || !!submittedHash;
+  const busy = isSigning || phase === "submitted";
   const isReady = phase === "ready" && !busy;
 
   const getButtonText = () => {
-    if (confirmationStalled) {
-      return "Confirmation taking longer...";
-    }
     if (phase === "signing") {
-      return "Signing in wallet…";
+      return "Signing…";
     }
-    if (phase === "confirming") {
-      return "Broadcasting…";
+    if (phase === "submitted") {
+      return "Submitted";
     }
     return "Confirm & send";
   };
@@ -202,10 +123,10 @@ export function ConfirmTxModal({
           </div>
         </div>
 
-        {/* Status during confirmation */}
+        {/* Status during signing */}
         {phase !== "ready" && (
           <div
-            className={`tx-modal-status ${phase === "signing" ? "signing" : "confirming"}`}
+            className={`tx-modal-status ${phase === "signing" ? "signing" : "success-status"}`}
           >
             {phase === "signing" ? (
               <>
@@ -225,55 +146,17 @@ export function ConfirmTxModal({
                     strokeDasharray="8 8"
                   />
                 </svg>
-                Waiting for wallet signature…
-              </>
-            ) : confirmationStalled ? (
-              <>
-                <span style={{ color: "var(--warning)" }}>⚠</span>
-                Confirmation taking a while. You can close this and check later
-                on{" "}
-                <a
-                  href={submittedHash ? txExplorerUrl(submittedHash) : "#"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Etherscan
-                </a>
+                Awaiting signature…
               </>
             ) : (
-              <>
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 14 14"
-                  fill="none"
-                  className="spin"
-                >
-                  <circle
-                    cx="7"
-                    cy="7"
-                    r="5"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeDasharray="8 8"
-                  />
-                </svg>
-                Broadcasting to network…
-              </>
+              <>Submitted. Confirmation is running in background.</>
             )}
           </div>
         )}
 
         {submittedHash && (
           <div className="tx-modal-status success-status mono">
-            Submitted ·{" "}
-            <a
-              href={txExplorerUrl(submittedHash)}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {truncate(submittedHash)}
-            </a>
+            Submitted · {truncate(submittedHash)}
           </div>
         )}
 
@@ -287,7 +170,7 @@ export function ConfirmTxModal({
             disabled={isSigning}
             aria-disabled={isSigning}
           >
-            {isReady ? "Cancel" : "Done"}
+            Cancel
           </button>
           <button
             type="button"
@@ -296,7 +179,7 @@ export function ConfirmTxModal({
             disabled={!isReady}
             aria-disabled={!isReady}
           >
-            {phase === "signing" || phase === "confirming" ? (
+            {phase === "signing" || phase === "submitted" ? (
               <>
                 <svg
                   width="14"

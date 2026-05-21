@@ -13,23 +13,37 @@ export interface ToolUIPart {
   errorText?: string;
 }
 
+export interface TxPreviewStatus {
+  hash: `0x${string}`;
+  to: string;
+  valueEth: string;
+  idempotencyKey: string;
+  status: "confirming" | "confirmed" | "failed";
+}
+
 function truncateAddr(addr: string) {
   if (addr.length < 12) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
 function parseRecord(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object") return value as Record<string, unknown>;
+  if (value && typeof value === "object")
+    return value as Record<string, unknown>;
   return {};
 }
 
-export function TxPreviewCard({ part }: { part: ToolUIPart }) {
+export function TxPreviewCard({
+  part,
+  txStatus,
+}: {
+  part: ToolUIPart;
+  txStatus?: TxPreviewStatus | null;
+}) {
   const name = part.toolName ?? part.type.replace(/^tool-/, "");
   const input = parseRecord(part.input);
   const output = parseRecord(part.output);
   const isRunning =
-    part.state === "input-streaming" ||
-    part.state === "input-available";
+    part.state === "input-streaming" || part.state === "input-available";
   const isError = part.state === "output-error";
   const isDone = part.state === "output-available";
 
@@ -59,9 +73,13 @@ export function TxPreviewCard({ part }: { part: ToolUIPart }) {
             <span className="tx-value">{output.totalCostEth} ETH</span>
           </div>
         )}
-        {isRunning && <div className="tx-preview-status running">Estimating…</div>}
+        {isRunning && (
+          <div className="tx-preview-status running">Estimating…</div>
+        )}
         {isError && (
-          <div className="tx-preview-status error">{part.errorText ?? "Failed"}</div>
+          <div className="tx-preview-status error">
+            {part.errorText ?? "Failed"}
+          </div>
         )}
       </div>
     );
@@ -70,6 +88,27 @@ export function TxPreviewCard({ part }: { part: ToolUIPart }) {
   if (name === "sendTransaction") {
     if (isDone && isTxProposalOutput(output)) {
       const p = output.proposal;
+      const matchingStatus =
+        txStatus && txStatus.idempotencyKey === p.idempotencyKey
+          ? txStatus
+          : null;
+
+      const statusText =
+        matchingStatus?.status === "confirming"
+          ? "Transaction submitted. Confirming on-chain…"
+          : matchingStatus?.status === "confirmed"
+            ? "Transaction confirmed on Sepolia"
+            : matchingStatus?.status === "failed"
+              ? "Confirmation delayed. Check explorer for latest status"
+              : "Awaiting your confirmation in the modal";
+
+      const statusClass =
+        matchingStatus?.status === "confirmed"
+          ? "success"
+          : matchingStatus?.status === "failed"
+            ? "error"
+            : "running";
+
       return (
         <div className="tx-preview chat-tx-preview">
           <div className="tx-preview-label">Transaction preview</div>
@@ -85,9 +124,20 @@ export function TxPreviewCard({ part }: { part: ToolUIPart }) {
             <span className="tx-label">Simulation</span>
             <span className="tx-value success">Passed</span>
           </div>
-          <div className="tx-preview-status running">
-            Awaiting your confirmation in the modal
-          </div>
+          {matchingStatus && (
+            <div className="tx-row">
+              <span className="tx-label">Hash</span>
+              <a
+                href={`https://sepolia.etherscan.io/tx/${matchingStatus.hash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="tx-value accent"
+              >
+                {truncateAddr(matchingStatus.hash)}
+              </a>
+            </div>
+          )}
+          <div className={`tx-preview-status ${statusClass}`}>{statusText}</div>
         </div>
       );
     }
@@ -119,7 +169,13 @@ export function TxPreviewCard({ part }: { part: ToolUIPart }) {
           <span
             className={`tx-value ${isDone ? "success" : isError ? "danger" : ""}`}
           >
-            {isDone ? "Passed" : isRunning ? "Running…" : isError ? "Failed" : "—"}
+            {isDone
+              ? "Passed"
+              : isRunning
+                ? "Running…"
+                : isError
+                  ? "Failed"
+                  : "—"}
           </span>
         </div>
         {isDone && hash && (
@@ -140,7 +196,9 @@ export function TxPreviewCard({ part }: { part: ToolUIPart }) {
           </div>
         )}
         {isRunning && (
-          <div className="tx-preview-status running">Preparing transaction…</div>
+          <div className="tx-preview-status running">
+            Preparing transaction…
+          </div>
         )}
       </div>
     );

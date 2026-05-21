@@ -1108,6 +1108,16 @@ a {
 .chat-back:hover {
   color: var(--text);
 }
+
+/* Mobile: hide header left on small screens */
+@media (max-width: 600px) {
+  .chat-header {
+    justify-content: flex-end;
+  }
+  .chat-header-left {
+    display: none;
+  }
+}
 .chat-divider {
   width: 1px;
   height: 14px;
@@ -1202,6 +1212,18 @@ a {
 }
 .msg-assistant-content p:last-child {
   margin-bottom: 0;
+}
+.msg-assistant-content ul,
+.msg-assistant-content ol {
+  margin: 8px 0 10px;
+  padding-left: 20px;
+}
+.msg-assistant-content li {
+  margin: 6px 0;
+  padding-left: 2px;
+}
+.msg-assistant-content li::marker {
+  color: var(--text-2);
 }
 .msg-assistant-content code {
   font-family: var(--font-geist-mono), monospace;
@@ -1905,6 +1927,14 @@ a {
   }
   .msg-row {
     padding: 6px 16px;
+  }
+  .msg-assistant-content ul,
+  .msg-assistant-content ol {
+    padding-left: 22px;
+  }
+  .msg-assistant-content li {
+    margin: 7px 0;
+    padding-left: 4px;
   }
   .chat-composer-inner {
     padding: 8px 16px 10px;
