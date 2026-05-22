@@ -68,6 +68,32 @@ body {
   border-radius: 3px;
 }
 
+@media (max-width: 768px) {
+  .landing-nav {
+    padding: 0 16px;
+    background: rgba(10, 10, 10, 0.92);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
+  .nav-links,
+  .nav-cta {
+    display: none;
+  }
+
+  .nav-hamburger {
+    display: flex;
+    align-items: center;
+    background: #161616;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .nav-hamburger span {
+    background: #ededed;
+  }
+}
+
 button,
 input,
 textarea {
