@@ -20,6 +20,11 @@ import { SYSTEM_PROMPT } from "@/prompts/systemPrompt";
 import { InjectionDetectedError } from "@/types/errors";
 import { generateId } from "@/lib/utils";
 import { getAgentAddress } from "@/wallet/walletClient";
+import {
+  createSessionCookieHeader,
+  resolveSessionIdFromRequest,
+} from "@/lib/session";
+import { recordChatMessages, recordAuditEntry } from "@/audit/sessionStore";
 
 function resolveFromAddress(connected: string | null): string {
   if (connected) return connected;
@@ -89,7 +94,20 @@ function normalizeToUiMessage(message: IncomingMessage, index: number) {
 function unwrapResult(res: ReturnType<typeof JSON.parse>): unknown {
   if (res?.status === "success") return res.output;
   if (res?.status === "idempotency_hit") return res.output;
-  const errMsg = res?.error?.message ?? res?.error ?? "Tool execution failed";
+  const baseMessage =
+    res?.error?.message ?? res?.error ?? "Tool execution failed";
+  const context = res?.error?.context as
+    | { balance?: string; required?: string; suggestion?: string }
+    | undefined;
+
+  let errMsg = baseMessage;
+  if (context?.balance && context?.required) {
+    errMsg = `${baseMessage}. Available: ${context.balance} ETH, required: ${context.required} ETH.`;
+  }
+  if (context?.suggestion) {
+    errMsg = `${errMsg} ${context.suggestion}`;
+  }
+
   return { error: errMsg };
 }
 
@@ -107,7 +125,7 @@ export async function POST(request: Request) {
   // 1. Rate limiting -- applied first
   const ip = request.headers.get("x-forwarded-for") ?? "127.0.0.1";
   const connectedAddress = request.headers.get("x-wallet-address") ?? null;
-  const sessionId = request.headers.get("x-session-id")?.trim() || generateId();
+  const { sessionId, needsCookie } = resolveSessionIdFromRequest(request);
   const rateResult = checkRateLimit(ip);
   if (!rateResult.allowed) {
     return new Response("Too Many Requests", {
@@ -138,6 +156,7 @@ export async function POST(request: Request) {
 
   const auditLog = new AuditLog(sessionId);
   const gateway = new ExecutionGateway(auditLog);
+  recordChatMessages(sessionId, normalizedMessages, effectiveConnectedAddress);
 
   // 2. Injection guard on last user message
   const lastUser = [...uiMessages].reverse().find((m) => m.role === "user");
@@ -328,18 +347,27 @@ export async function POST(request: Request) {
       }),
     },
     onError: async ({ error }) => {
-      await auditLog.append({
+      const entry = await auditLog.append({
         eventType: "TOOL_CALL_FAILED",
         severity: "error",
         toolName: undefined,
         context: { message: String(error) },
       });
+      recordAuditEntry(sessionId, entry);
     },
   });
 
-  const stream = result.toUIMessageStreamResponse();
+  const stream = result.toUIMessageStreamResponse({
+    onFinish: async ({ messages }) => {
+      // Persist the complete final message list (user + assistant) to server session
+      recordChatMessages(sessionId, messages, effectiveConnectedAddress);
+    },
+  });
   const headers = new Headers(stream.headers);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("X-Session-Id", sessionId);
+  if (needsCookie) {
+    headers.set("Set-Cookie", createSessionCookieHeader(sessionId));
+  }
   return new Response(stream.body, { status: stream.status, headers });
 }

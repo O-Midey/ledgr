@@ -17,7 +17,10 @@ export class AuditLog {
   private readonly entries: AuditEntry[] = [];
   private lastHash: string = GENESIS_HASH;
 
-  constructor(private readonly sessionId: string) {}
+  constructor(
+    private readonly sessionId: string,
+    private readonly walletAddress: string | null = null,
+  ) {}
 
   async append(params: {
     eventType: AuditEventType;
@@ -29,6 +32,7 @@ export class AuditLog {
   }): Promise<AuditEntry> {
     const base = JSON.stringify({
       sessionId: this.sessionId,
+      walletAddress: this.walletAddress,
       eventType: params.eventType,
       timestamp: nowMs(),
       toolName: params.toolName,
@@ -53,7 +57,10 @@ export class AuditLog {
       toolName: params.toolName,
       idempotencyKey: params.idempotencyKey,
       executionStatus: params.executionStatus,
-      context: params.context,
+      context: {
+        ...params.context,
+        walletAddress: this.walletAddress,
+      },
       hash,
       previousHash: this.lastHash,
     };

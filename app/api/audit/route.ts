@@ -1,10 +1,11 @@
 import { getAuditEntries } from "@/audit/sessionStore";
+import {
+  createSessionCookieHeader,
+  resolveSessionIdFromRequest,
+} from "@/lib/session";
 
 export async function GET(request: Request) {
-  const sessionId = request.headers.get("x-session-id")?.trim();
-  if (!sessionId) {
-    return Response.json({ entries: [] });
-  }
+  const { sessionId, needsCookie } = resolveSessionIdFromRequest(request);
 
   const entries = getAuditEntries(sessionId).map((e) => ({
     id: e.id,
@@ -15,5 +16,10 @@ export async function GET(request: Request) {
     executionStatus: e.executionStatus,
   }));
 
-  return Response.json({ entries });
+  const response = Response.json({ entries, sessionId });
+  if (needsCookie) {
+    response.headers.set("Set-Cookie", createSessionCookieHeader(sessionId));
+  }
+
+  return response;
 }

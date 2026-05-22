@@ -43,7 +43,8 @@ export type SendTransactionInput = z.infer<typeof sendTransactionSchema>;
 
 export const sendTransactionTool = {
   name: "sendTransaction" as const,
-  description: "Send ETH on Sepolia — simulated against the sender wallet before user confirmation",
+  description:
+    "Send ETH on Sepolia — simulated against the sender wallet before user confirmation",
   schema: sendTransactionSchema,
   idempotent: false, // handled externally by ExecutionGateway
   sideEffects: true,
@@ -60,9 +61,11 @@ export const sendTransactionTool = {
 
     const balance = await publicClient.getBalance({ address: from });
     if (balance < value) {
+      const balanceEth = weiToEth(balance);
       throw new PreconditionError("Insufficient balance", {
-        balance: weiToEth(balance),
+        balance: balanceEth,
         required: input.valueEth,
+        suggestion: `Available ${balanceEth} ETH. Reduce amount below ${balanceEth} ETH or fund wallet.`,
       });
     }
 

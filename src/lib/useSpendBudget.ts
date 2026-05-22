@@ -1,4 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  MAX_DAILY_ETH,
+  MAX_SESSION_ETH,
+  MAX_SINGLE_TX_ETH,
+} from "@/lib/constants";
 
 export interface SpendEntry {
   amount: number; // ETH
@@ -41,9 +46,9 @@ const SESSION_START_KEY = "ledgr-session-start";
 
 // Default conservative limits for Sepolia demo
 const DEFAULT_LIMITS: SpendLimits = {
-  perTransaction: 0.5, // 0.5 ETH max per tx
-  sessionTotal: 2.0, // 2 ETH per session
-  dailyTotal: 5.0, // 5 ETH per day
+  perTransaction: MAX_SINGLE_TX_ETH,
+  sessionTotal: MAX_SESSION_ETH,
+  dailyTotal: MAX_DAILY_ETH,
 };
 
 function getSessionStart(): number {

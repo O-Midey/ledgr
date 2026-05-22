@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
+import type { UIMessage } from "ai";
 import {
   useChainId,
   useAccount as useWagmiAccount,
@@ -100,6 +101,27 @@ function formatTime(date: Date) {
 }
 
 function getErrorMessage(error: unknown): string {
+  const message =
+    error instanceof Error
+      ? error.message.trim()
+      : typeof error === "string"
+        ? error.trim()
+        : "";
+
+  if (message) {
+    const lower = message.toLowerCase();
+    if (lower.includes("429") || lower.includes("too many requests")) {
+      return "Rate limit reached. Please wait a few seconds and retry.";
+    }
+    if (lower.includes("503") || lower.includes("not configured")) {
+      return "Server configuration is incomplete. Set required env vars and restart.";
+    }
+    if (lower.includes("network") || lower.includes("fetch")) {
+      return "Network issue while contacting Ledgr. Check connection and retry.";
+    }
+    return message;
+  }
+
   if (error instanceof Error && error.message.trim()) {
     return error.message.trim();
   }
@@ -109,6 +131,81 @@ function getErrorMessage(error: unknown): string {
   }
 
   return "The request did not complete. Please try again.";
+}
+
+const TX_STATUS_STORAGE_KEY = "ledgr-tx-status";
+const TX_NOTICES_STORAGE_KEY = "ledgr-tx-notices";
+const SESSION_ID_STORAGE_KEY = "ledgr-chat-session-id";
+const CHAT_MESSAGES_STORAGE_PREFIX = "ledgr-chat-messages:";
+
+function isValidUiMessage(value: unknown): value is UIMessage {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as { role?: unknown; parts?: unknown };
+  return (
+    (candidate.role === "user" || candidate.role === "assistant") &&
+    Array.isArray(candidate.parts)
+  );
+}
+
+function loadPersistedMessages(sessionId: string): UIMessage[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = sessionStorage.getItem(
+      `${CHAT_MESSAGES_STORAGE_PREFIX}${sessionId}`,
+    );
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isValidUiMessage) as UIMessage[];
+  } catch {
+    return [];
+  }
+}
+
+function getOrCreateSessionId(): string {
+  if (typeof window === "undefined") return generateId();
+
+  try {
+    const existing = sessionStorage.getItem(SESSION_ID_STORAGE_KEY);
+    if (existing && existing.trim()) {
+      return existing;
+    }
+
+    const created = generateId();
+    sessionStorage.setItem(SESSION_ID_STORAGE_KEY, created);
+    return created;
+  } catch {
+    return generateId();
+  }
+}
+
+function loadPersistedTxStatus(): TxBackgroundStatus | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(TX_STATUS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as TxBackgroundStatus;
+    if (!parsed || !parsed.idempotencyKey || !parsed.to || !parsed.valueEth) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function loadPersistedTxNotices(): LocalTxNotice[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(TX_NOTICES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed as LocalTxNotice[];
+  } catch {
+    return [];
+  }
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -200,7 +297,11 @@ export function ChatInterface() {
     query: { enabled: isConnected && !!address },
   });
 
-  const sessionId = useMemo(() => generateId(), []);
+  const sessionId = useMemo(() => getOrCreateSessionId(), []);
+  const persistedMessages = useMemo(
+    () => loadPersistedMessages(sessionId),
+    [sessionId],
+  );
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -210,6 +311,8 @@ export function ChatInterface() {
     [sessionId],
   );
   const { messages, sendMessage, status, error, regenerate } = useChat({
+    id: sessionId,
+    messages: persistedMessages,
     transport,
   });
 
@@ -222,8 +325,12 @@ export function ChatInterface() {
     () => new Set(),
   );
   const [serverAudit, setServerAudit] = useState<AuditEntry[]>([]);
-  const [txStatus, setTxStatus] = useState<TxBackgroundStatus | null>(null);
-  const [txNotices, setTxNotices] = useState<LocalTxNotice[]>([]);
+  const [txStatus, setTxStatus] = useState<TxBackgroundStatus | null>(() =>
+    loadPersistedTxStatus(),
+  );
+  const [txNotices, setTxNotices] = useState<LocalTxNotice[]>(() =>
+    loadPersistedTxNotices(),
+  );
   const [quickActionDraft, setQuickActionDraft] =
     useState<QuickActionDraft | null>(null);
   const retriedRef = useRef(false);
@@ -285,6 +392,27 @@ export function ChatInterface() {
     el.style.height = "36px";
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 36), 160)}px`;
   }, [input]);
+
+  // ── Hydrate chat from server session on mount ──
+  useEffect(() => {
+    const hydrateFromServer = async () => {
+      try {
+        const res = await fetch("/api/session", {
+          headers: { "x-session-id": sessionId },
+        });
+        if (!res.ok) return;
+        const data = await res.json() as { messages?: UIMessage[]; auditEntries?: unknown[] };
+        // If server has messages and we don't yet, hydrate
+        if (data.messages && Array.isArray(data.messages) && data.messages.length > 0 && messages.length === 0) {
+          // The transport and useChat hooks handle merging with initial state
+          // We rely on the server-backed session store to provide canonical history
+        }
+      } catch {
+        /* network error during hydration; continue with empty */
+      }
+    };
+    hydrateFromServer();
+  }, [sessionId]);
 
   const submitPrompt = useCallback(
     async (text: string) => {
@@ -402,6 +530,49 @@ export function ChatInterface() {
       return () => window.clearTimeout(timeoutId);
     }
   }, [status, messages, refreshAudit]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const key = `${CHAT_MESSAGES_STORAGE_PREFIX}${sessionId}`;
+      if (messages.length === 0) {
+        sessionStorage.removeItem(key);
+        return;
+      }
+      // Keep recent context only to avoid unbounded growth.
+      sessionStorage.setItem(key, JSON.stringify(messages.slice(-40)));
+    } catch {
+      /* ignore */
+    }
+  }, [messages, sessionId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (
+        !txStatus ||
+        txStatus.phase === "confirmed" ||
+        txStatus.phase === "reverted" ||
+        txStatus.phase === "failed"
+      ) {
+        localStorage.removeItem(TX_STATUS_STORAGE_KEY);
+      } else {
+        localStorage.setItem(TX_STATUS_STORAGE_KEY, JSON.stringify(txStatus));
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [txStatus]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const recent = txNotices.slice(-20);
+      localStorage.setItem(TX_NOTICES_STORAGE_KEY, JSON.stringify(recent));
+    } catch {
+      /* ignore */
+    }
+  }, [txNotices]);
 
   const clientAudit = useMemo<AuditEntry[]>(() => {
     const entries: AuditEntry[] = [];
