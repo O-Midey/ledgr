@@ -93,6 +93,17 @@ body {
     background: #ededed;
   }
 }
+.nav-hamburger span {
+  display: block;
+  width: 18px;
+  height: 1.5px;
+  background: var(--text-2);
+  border-radius: 2px;
+  transition:
+    transform 0.2s var(--ease),
+    opacity 0.2s;
+  transform-origin: center;
+}
 
 button,
 input,
