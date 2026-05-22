@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import {
@@ -11,22 +12,61 @@ import {
 import { formatEther, formatUnits } from "viem";
 import { sepolia } from "viem/chains";
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import ReactMarkdown from "react-markdown";
-import {
-  ActivityTrace,
-  TxPreviewCard,
-  type ToolUIPart,
-  type TxPreviewStatus,
-} from "./TxPreviewCard";
-import { ConfirmTxModal } from "./ConfirmTxModal";
-import { AddressBookPanel } from "./AddressBookPanel";
-import { AddressSuggestions } from "./AddressSuggestions";
-import { ContextualChips, type SuggestionChip } from "./ContextualChips";
-import { QuickActionCard } from "./QuickActionCard";
+import type { ToolUIPart, TxPreviewStatus } from "./TxPreviewCard";
+import type { SuggestionChip } from "./ContextualChips";
 import type { AddressAlias } from "@/lib/useAddressBook";
 import { isTxProposalOutput, type TxProposal } from "@/lib/txProposal";
 import { formatAuditForSidebar } from "@/audit/sessionStore";
 import { generateId } from "@/lib/utils";
+
+const AssistantMessage = dynamic(
+  () => import("./AssistantMessage").then((mod) => mod.AssistantMessage),
+  {
+    loading: () => <AssistantMessageSkeleton />,
+  },
+);
+
+const WalletSidebar = dynamic(
+  () => import("./WalletSidebar").then((mod) => mod.WalletSidebar),
+  {
+    loading: () => <WalletSidebarSkeleton />,
+  },
+);
+
+const ConfirmTxModal = dynamic(
+  () => import("./ConfirmTxModal").then((mod) => mod.ConfirmTxModal),
+  {
+    loading: () => null,
+  },
+);
+
+const AddressBookPanel = dynamic(
+  () => import("./AddressBookPanel").then((mod) => mod.AddressBookPanel),
+  {
+    loading: () => null,
+  },
+);
+
+const AddressSuggestions = dynamic(
+  () => import("./AddressSuggestions").then((mod) => mod.AddressSuggestions),
+  {
+    loading: () => null,
+  },
+);
+
+const ContextualChips = dynamic(
+  () => import("./ContextualChips").then((mod) => mod.ContextualChips),
+  {
+    loading: () => null,
+  },
+);
+
+const QuickActionCard = dynamic(
+  () => import("./QuickActionCard").then((mod) => mod.QuickActionCard),
+  {
+    loading: () => null,
+  },
+);
 
 function findPendingProposal(
   messages: { role: string; parts: unknown[] }[],
@@ -667,12 +707,12 @@ export function ChatInterface() {
           {!hasMessages && (
             <div className="empty-state animate-fade-in">
               <div className="empty-state-title">
-                How can I help with your wallet?
+                Ledgr can carry out wallet actions on Sepolia.
               </div>
               <div className="empty-state-sub">
                 {isConnected
                   ? `${address?.slice(0, 6)}…${address?.slice(-4)} · Sepolia`
-                  : "Connect your wallet to check balances, simulate transfers, and review audit logs."}
+                  : "Connect your wallet to check balances, estimate gas, send ETH on Sepolia, and inspect the audit trail."}
               </div>
             </div>
           )}
@@ -1006,119 +1046,6 @@ export function ChatInterface() {
   );
 }
 
-// ── AssistantMessage ───────────────────────────────────────────────────────
-
-function AssistantMessage({
-  content,
-  toolParts,
-  isStreaming,
-  txStatus,
-}: {
-  content: string;
-  toolParts: ToolUIPart[];
-  isStreaming: boolean;
-  txStatus: TxPreviewStatus | null;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }, [content]);
-
-  const previewTools = toolParts.filter((tp) => {
-    const name = tp.toolName ?? tp.type.replace(/^tool-/, "");
-    return name === "estimateGas" || name === "sendTransaction";
-  });
-
-  const badgeTools = toolParts.filter((tp) => {
-    const name = tp.toolName ?? tp.type.replace(/^tool-/, "");
-    return name !== "estimateGas" && name !== "sendTransaction";
-  });
-
-  return (
-    <div className="assistant-msg-wrapper">
-      <div className="msg-assistant-content">
-        <ReactMarkdown>{content}</ReactMarkdown>
-        {isStreaming && <span className="stream-cursor">▋</span>}
-      </div>
-
-      {badgeTools.length > 0 && (
-        <div className="preview-tools">
-          {badgeTools.map((tp, i) => {
-            const toolName = tp.toolName ?? tp.type.replace(/^tool-/, "");
-            const state = tp.state;
-            const cls =
-              state === "output-available"
-                ? "done"
-                : state === "output-error"
-                  ? "error"
-                  : "running";
-            const icon =
-              state === "output-available"
-                ? "✓"
-                : state === "output-error"
-                  ? "✕"
-                  : "…";
-            return (
-              <span key={i} className={`tool-badge ${cls}`}>
-                {icon} {toolName}
-              </span>
-            );
-          })}
-        </div>
-      )}
-
-      {previewTools.map((tp) => (
-        <TxPreviewCard key={tp.toolCallId} part={tp} txStatus={txStatus} />
-      ))}
-
-      <ActivityTrace toolParts={toolParts} />
-
-      {content && (
-        <div className="msg-actions">
-          <button
-            className="msg-action-btn"
-            onClick={handleCopy}
-            title="Copy"
-            type="button"
-          >
-            {copied ? (
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path
-                  d="M2 6L5 9L10 3"
-                  stroke="var(--success)"
-                  strokeWidth="1.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            ) : (
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <rect
-                  x="1"
-                  y="3"
-                  width="7"
-                  height="8"
-                  rx="1.5"
-                  stroke="currentColor"
-                  strokeWidth="1.1"
-                />
-                <path
-                  d="M4 3V2C4 1.4 4.4 1 5 1H10C10.6 1 11 1.4 11 2V7C11 7.6 10.6 8 10 8H9"
-                  stroke="currentColor"
-                  strokeWidth="1.1"
-                />
-              </svg>
-            )}
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function TxCompletionNotice({ notice }: { notice: LocalTxNotice }) {
   const shortTo = `${notice.to.slice(0, 6)}…${notice.to.slice(-4)}`;
   const shortHash = `${notice.hash.slice(0, 10)}…${notice.hash.slice(-6)}`;
@@ -1203,370 +1130,34 @@ function TxCompletionNotice({ notice }: { notice: LocalTxNotice }) {
   );
 }
 
-// ── WalletSidebar ──────────────────────────────────────────────────────────
-
-function WalletSidebar({
-  address,
-  isConnected,
-  auditEntries,
-  balanceData,
-  balanceLoading,
-}: {
-  address?: string;
-  isConnected: boolean;
-  auditEntries: AuditEntry[];
-  balanceData?: { formatted: string; symbol: string } | null;
-  balanceLoading: boolean;
-}) {
-  const shortAddr = address
-    ? `${address.slice(0, 6)}…${address.slice(-4)}`
-    : null;
-  const [copied, setCopied] = useState(false);
-  const [toolFilter, setToolFilter] = useState("all");
-  const [severityFilter, setSeverityFilter] = useState("all");
-  const [eventFilter, setEventFilter] = useState("all");
-  const [groupBy, setGroupBy] = useState<
-    "none" | "tool" | "severity" | "event"
-  >("severity");
-
-  const copyAddress = () => {
-    if (!address) return;
-    navigator.clipboard.writeText(address);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-
-  const toolOptions = useMemo(
-    () =>
-      Array.from(new Set(auditEntries.map((e) => e.toolName).filter(Boolean))),
-    [auditEntries],
-  );
-  const eventOptions = useMemo(
-    () => Array.from(new Set(auditEntries.map((e) => e.eventType))),
-    [auditEntries],
-  );
-
-  const filteredAuditEntries = useMemo(
-    () =>
-      auditEntries.filter((e) => {
-        if (toolFilter !== "all" && e.toolName !== toolFilter) return false;
-        if (severityFilter !== "all" && e.severity !== severityFilter)
-          return false;
-        if (eventFilter !== "all" && e.eventType !== eventFilter) return false;
-        return true;
-      }),
-    [auditEntries, toolFilter, severityFilter, eventFilter],
-  );
-
-  const groupedAuditEntries = useMemo(() => {
-    if (groupBy === "none") {
-      return [{ label: "All", entries: filteredAuditEntries }];
-    }
-
-    const bucket = new Map<string, AuditEntry[]>();
-    for (const entry of filteredAuditEntries) {
-      const key =
-        groupBy === "tool"
-          ? (entry.toolName ?? "unknown")
-          : groupBy === "severity"
-            ? entry.severity
-            : entry.eventType;
-      const current = bucket.get(key) ?? [];
-      current.push(entry);
-      bucket.set(key, current);
-    }
-
-    return Array.from(bucket.entries()).map(([label, entries]) => ({
-      label,
-      entries,
-    }));
-  }, [filteredAuditEntries, groupBy]);
-
+function AssistantMessageSkeleton() {
   return (
-    <div className="sidebar-inner">
-      {/* Wallet */}
+    <div className="assistant-msg-wrapper" aria-hidden="true">
+      <div className="msg-assistant-content">
+        <div className="skeleton" style={{ width: "74%", height: 14 }} />
+        <div
+          className="skeleton"
+          style={{ width: "92%", height: 14, marginTop: 8 }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function WalletSidebarSkeleton() {
+  return (
+    <div className="sidebar-inner" aria-hidden="true">
       <div className="sidebar-section">
         <div className="sidebar-label">Wallet</div>
-        {isConnected && address ? (
-          <>
-            <button
-              className="address-chip"
-              title={copied ? "Copied!" : address}
-              onClick={copyAddress}
-            >
-              {copied ? (
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                  <path
-                    d="M2 5L4.5 7.5L8.5 2.5"
-                    stroke="var(--success)"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              ) : (
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                  <rect
-                    x="1"
-                    y="3"
-                    width="6"
-                    height="6"
-                    rx="1"
-                    stroke="currentColor"
-                    strokeWidth="1"
-                  />
-                  <path
-                    d="M3 3V2C3 1.4 3.4 1 4 1H8C8.6 1 9 1.4 9 2V6C9 6.6 8.6 7 8 7H7"
-                    stroke="currentColor"
-                    strokeWidth="1"
-                  />
-                </svg>
-              )}
-              {shortAddr}
-            </button>
-            <div style={{ marginTop: 8 }}>
-              <div className="network-badge">
-                <span className="network-dot" />
-                Sepolia
-              </div>
-            </div>
-          </>
-        ) : (
-          <div style={{ fontSize: 12, color: "var(--text-3)" }}>
-            Not connected
-          </div>
-        )}
+        <div className="skeleton" style={{ width: 120, height: 28 }} />
       </div>
-
-      {/* Live balance */}
       <div className="sidebar-section">
         <div className="sidebar-label">Balance</div>
-        {isConnected ? (
-          balanceLoading ? (
-            <div>
-              <div
-                className="skeleton"
-                style={{ width: 80, height: 22, marginBottom: 4 }}
-              />
-              <div className="skeleton" style={{ width: 50, height: 12 }} />
-            </div>
-          ) : (
-            <>
-              <div className="balance-display">
-                {balanceData
-                  ? parseFloat(balanceData.formatted).toFixed(4)
-                  : "—"}
-              </div>
-              <div className="balance-sub">
-                {balanceData?.symbol ?? "ETH"} · Sepolia
-              </div>
-            </>
-          )
-        ) : (
-          <div style={{ fontSize: 12, color: "var(--text-3)" }}>
-            Connect wallet
-          </div>
-        )}
+        <div className="skeleton" style={{ width: 96, height: 24 }} />
       </div>
-
-      {/* Network */}
-      <div className="sidebar-section">
-        <div className="sidebar-label">Network</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {[
-            { label: "Chain", value: "Sepolia" },
-            { label: "Chain ID", value: "11155111" },
-            { label: "RPC", value: "Alchemy" },
-          ].map((r) => (
-            <div
-              key={r.label}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: 11,
-              }}
-            >
-              <span style={{ color: "var(--text-3)" }}>{r.label}</span>
-              <span
-                style={{
-                  fontFamily: "var(--font-geist-mono)",
-                  color: "var(--text-2)",
-                }}
-              >
-                {r.value}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Audit log — scrollable, bounded */}
       <div className="sidebar-section sidebar-audit">
         <div className="sidebar-label">Audit Log</div>
-        <div className="audit-controls">
-          <select
-            className="audit-select"
-            value={toolFilter}
-            onChange={(e) => setToolFilter(e.target.value)}
-          >
-            <option value="all">All tools</option>
-            {toolOptions.map((tool) => (
-              <option key={tool} value={tool}>
-                {tool}
-              </option>
-            ))}
-          </select>
-          <select
-            className="audit-select"
-            value={severityFilter}
-            onChange={(e) => setSeverityFilter(e.target.value)}
-          >
-            <option value="all">All severity</option>
-            <option value="info">Info</option>
-            <option value="warn">Warn</option>
-            <option value="error">Error</option>
-            <option value="critical">Critical</option>
-          </select>
-          <select
-            className="audit-select"
-            value={eventFilter}
-            onChange={(e) => setEventFilter(e.target.value)}
-          >
-            <option value="all">All events</option>
-            {eventOptions.map((eventType) => (
-              <option key={eventType} value={eventType}>
-                {eventType}
-              </option>
-            ))}
-          </select>
-          <select
-            className="audit-select"
-            value={groupBy}
-            onChange={(e) =>
-              setGroupBy(
-                e.target.value as "none" | "tool" | "severity" | "event",
-              )
-            }
-          >
-            <option value="severity">Group: severity</option>
-            <option value="tool">Group: tool</option>
-            <option value="event">Group: event</option>
-            <option value="none">No grouping</option>
-          </select>
-        </div>
-        <div className="audit-scroll">
-          {filteredAuditEntries.length === 0 ? (
-            <div style={{ fontSize: 11, color: "var(--text-3)" }}>
-              No activity yet
-            </div>
-          ) : (
-            groupedAuditEntries.map((group) => (
-              <div key={group.label} className="audit-group">
-                {groupBy !== "none" && (
-                  <div className="audit-group-label">{group.label}</div>
-                )}
-                {group.entries.map((e, i) => (
-                  <details
-                    key={`${group.label}-${i}-${e.time}`}
-                    className="audit-entry"
-                  >
-                    <summary className="audit-entry-summary">
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: 5,
-                            height: 5,
-                            borderRadius: "50%",
-                            flexShrink: 0,
-                            background:
-                              e.status === "success"
-                                ? "var(--success)"
-                                : e.status === "running"
-                                  ? "var(--accent)"
-                                  : "var(--danger)",
-                            animation:
-                              e.status === "running"
-                                ? "pulse-dot 1.5s ease-in-out infinite"
-                                : "none",
-                          }}
-                        />
-                        <span className="audit-action">{e.action}</span>
-                      </div>
-                      <span className="audit-time">{e.time}</span>
-                    </summary>
-                    <div className="audit-entry-details">
-                      <div className="audit-meta-row">
-                        <span>event</span>
-                        <span>{e.eventType}</span>
-                      </div>
-                      <div className="audit-meta-row">
-                        <span>severity</span>
-                        <span>{e.severity}</span>
-                      </div>
-                      {e.toolName && (
-                        <div className="audit-meta-row">
-                          <span>tool</span>
-                          <span>{e.toolName}</span>
-                        </div>
-                      )}
-                      {e.hash && (
-                        <div className="audit-meta-row">
-                          <span>hash</span>
-                          <span className="audit-hash">{`${e.hash.slice(0, 10)}…${e.hash.slice(-8)}`}</span>
-                        </div>
-                      )}
-                      {e.previousHash && (
-                        <div className="audit-meta-row">
-                          <span>prev</span>
-                          <span className="audit-hash">{`${e.previousHash.slice(0, 10)}…${e.previousHash.slice(-8)}`}</span>
-                        </div>
-                      )}
-                    </div>
-                  </details>
-                ))}
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* Safety — always visible at bottom */}
-      <div className="sidebar-section sidebar-safety">
-        <div className="sidebar-label">Safety</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-          {[
-            { label: "Simulation", ok: true },
-            { label: "Supervisor", ok: true },
-            { label: "Audit Log", ok: true },
-          ].map((s) => (
-            <div
-              key={s.label}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                fontSize: 11,
-              }}
-            >
-              <span style={{ color: "var(--text-3)" }}>{s.label}</span>
-              <span
-                style={{
-                  color: s.ok ? "var(--success)" : "var(--danger)",
-                  fontFamily: "var(--font-geist-mono)",
-                  fontSize: 10,
-                }}
-              >
-                {s.ok ? "active" : "off"}
-              </span>
-            </div>
-          ))}
-        </div>
+        <div className="skeleton" style={{ width: "100%", height: 180 }} />
       </div>
     </div>
   );
