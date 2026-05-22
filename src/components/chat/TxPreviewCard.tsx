@@ -332,47 +332,36 @@ export function ActivityTrace({ toolParts }: { toolParts: ToolUIPart[] }) {
   if (toolParts.length === 0) return null;
 
   return (
-    <div className="reasoning-trace">
+    <div className="activity-trace">
       <button
         type="button"
-        className="reasoning-trace-header"
+        className="activity-trace-toggle"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
-        Activity
-        <span className="reasoning-trace-count mono">{toolParts.length}</span>
+        <span className="activity-trace-label">Activity</span>
+        <span className="activity-trace-count">{toolParts.length}</span>
         <svg
-          width="10"
-          height="10"
-          viewBox="0 0 10 10"
-          fill="none"
-          className={`reasoning-chevron ${expanded ? "open" : ""}`}
+          width="10" height="10" viewBox="0 0 10 10" fill="none"
+          style={{ marginLeft: "auto", transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "none", flexShrink: 0 }}
           aria-hidden
         >
-          <path
-            d="M2 4L5 7L8 4"
-            stroke="currentColor"
-            strokeWidth="1.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+          <path d="M2 4L5 7L8 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
       {expanded && (
-        <div className="reasoning-trace-body activity-trace-body">
+        <div className="activity-trace-body">
           {toolParts.map((tp) => {
             const toolName = tp.toolName ?? tp.type.replace(/^tool-/, "");
             const status =
-              tp.state === "output-available"
-                ? "done"
-                : tp.state === "output-error"
-                  ? "error"
-                  : "running";
+              tp.state === "output-available" ? "done"
+              : tp.state === "output-error" ? "error"
+              : "running";
             return (
               <div key={tp.toolCallId} className="activity-step">
                 <span className={`activity-dot ${status}`} />
-                <span className="mono">{toolName}</span>
-                <span className="activity-state">{status}</span>
+                <span className="activity-step-name">{toolName}</span>
+                <span className="activity-step-status">{status}</span>
               </div>
             );
           })}

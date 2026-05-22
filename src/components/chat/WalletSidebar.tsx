@@ -33,7 +33,6 @@ export function WalletSidebar({
   const [toolFilter, setToolFilter] = useState("all");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [eventFilter, setEventFilter] = useState("all");
-  const [traceOpen, setTraceOpen] = useState(false);
   const [groupBy, setGroupBy] = useState<
     "none" | "tool" | "severity" | "event"
   >("severity");
@@ -95,11 +94,6 @@ export function WalletSidebar({
       entries,
     }));
   }, [filteredAuditEntries, groupBy]);
-
-  const reasoningTraceEntries = useMemo(
-    () => auditEntries.slice(0, 8),
-    [auditEntries],
-  );
 
   return (
     <div className="sidebar-inner">
@@ -217,67 +211,6 @@ export function WalletSidebar({
       </div>
 
       <div className="sidebar-section sidebar-audit">
-        <div className="sidebar-label">Reasoning Trace</div>
-        <div className="reasoning-trace">
-          <button
-            type="button"
-            className="reasoning-trace-header"
-            onClick={() => setTraceOpen((prev) => !prev)}
-            aria-expanded={traceOpen}
-          >
-            Agent steps
-            <span className="reasoning-trace-count mono">
-              {reasoningTraceEntries.length}
-            </span>
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 10 10"
-              fill="none"
-              className={`reasoning-chevron ${traceOpen ? "open" : ""}`}
-              aria-hidden
-            >
-              <path
-                d="M2 4L5 7L8 4"
-                stroke="currentColor"
-                strokeWidth="1.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-          {traceOpen && (
-            <div className="reasoning-trace-body activity-trace-body">
-              {reasoningTraceEntries.length === 0 ? (
-                <div
-                  className="activity-step"
-                  style={{ color: "var(--text-3)" }}
-                >
-                  No reasoning steps yet
-                </div>
-              ) : (
-                reasoningTraceEntries.map((entry, index) => (
-                  <div
-                    key={`${entry.time}-${entry.action}-${index}`}
-                    className="activity-step"
-                  >
-                    <span
-                      className={`activity-dot ${
-                        entry.status === "success"
-                          ? "done"
-                          : entry.status === "error"
-                            ? "error"
-                            : "running"
-                      }`}
-                    />
-                    <span className="mono">{entry.action}</span>
-                    <span className="activity-state">{entry.status}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </div>
 
         <div style={{ height: 10 }} />
         <div className="sidebar-label">Audit Log</div>

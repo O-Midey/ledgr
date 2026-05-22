@@ -905,7 +905,46 @@ export function ChatInterface() {
             if (m.role === "user") {
               return (
                 <div key={m.id} className="msg-row user">
-                  <div className="msg-user-bubble">{textContent}</div>
+                  <div className="msg-user-stack">
+                    <div className="msg-user-bubble">{textContent}</div>
+                    {textContent && (
+                      <div className="msg-user-tools">
+                        <button
+                          type="button"
+                          className="msg-inline-action"
+                          disabled={isLoading || isWrongNetwork}
+                          aria-label={`Retry prompt: ${textContent.slice(0, 80)}`}
+                          title="Retry this prompt"
+                          onClick={() => {
+                            void submitPrompt(textContent);
+                          }}
+                        >
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 12 12"
+                            fill="none"
+                            aria-hidden="true"
+                          >
+                            <path
+                              d="M2 6C2 3.8 3.8 2 6 2C7.4 2 8.6 2.7 9.3 3.8M10 6C10 8.2 8.2 10 6 10C4.6 10 3.4 9.3 2.7 8.2"
+                              stroke="currentColor"
+                              strokeWidth="1.2"
+                              strokeLinecap="round"
+                            />
+                            <path
+                              d="M9 1.5V4H11.5"
+                              stroke="currentColor"
+                              strokeWidth="1.2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                          Retry
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <div className="msg-timestamp">{formatTime(new Date())}</div>
                 </div>
               );
@@ -913,7 +952,7 @@ export function ChatInterface() {
 
             return (
               <div key={m.id} className="msg-row assistant">
-                <div className="msg-assistant-wrapper">
+                <div className="assistant-msg-wrapper">
                   <AssistantMessage
                     content={textContent}
                     toolParts={toolParts}
@@ -1075,7 +1114,7 @@ export function ChatInterface() {
               <div className="chat-input-actions">
                 <button
                   type="button"
-                  className="sidebar-toggle-btn"
+                  className="sidebar-toggle-btn address-book-toggle-btn"
                   onClick={() => setAddressBookOpen(true)}
                   title="Address book"
                   aria-label="Address book"

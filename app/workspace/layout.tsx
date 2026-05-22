@@ -5,5 +5,9 @@ export default function WorkspaceLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return <Providers>{children}</Providers>;
+  return (
+    <div style={{ height: "100dvh", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <Providers>{children}</Providers>
+    </div>
+  );
 }

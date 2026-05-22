@@ -55,7 +55,7 @@ export function HeroSection({ onOpenWorkspace }: Props) {
           <div className="hero-actions hero-animate animate-fade-up opacity-0 delay-300">
             <button
               type="button"
-              className="btn-primary btn-hero"
+              className="btn-primary btn-hero mono"
               onClick={onOpenWorkspace}
             >
               Open Workspace
