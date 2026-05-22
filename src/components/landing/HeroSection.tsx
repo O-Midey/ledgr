@@ -22,7 +22,7 @@ export function HeroSection({ onOpenWorkspace }: Props) {
           }
         });
       },
-      { threshold: 0.1 }
+      { threshold: 0.1 },
     );
     els.forEach((el) => io.observe(el));
     return () => io.disconnect();
@@ -35,10 +35,10 @@ export function HeroSection({ onOpenWorkspace }: Props) {
       <div className="hero-inner">
         {/* ── Copy ── */}
         <div className="hero-copy">
-          <div className="hero-eyebrow hero-animate animate-fade-up opacity-0">
+          {/* <div className="hero-eyebrow hero-animate animate-fade-up opacity-0">
             <span className="hero-eyebrow-dot" aria-hidden />
             AI Wallet Operating System
-          </div>
+          </div> */}
 
           <h1 className="hero-headline hero-animate animate-fade-up opacity-0 delay-100">
             Simulate. Audit.
@@ -53,22 +53,34 @@ export function HeroSection({ onOpenWorkspace }: Props) {
           </p>
 
           <div className="hero-actions hero-animate animate-fade-up opacity-0 delay-300">
-            <button type="button" className="btn-primary btn-hero" onClick={onOpenWorkspace}>
+            <button
+              type="button"
+              className="btn-primary btn-hero"
+              onClick={onOpenWorkspace}
+            >
               Open Workspace
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-                <path d="M2.5 6.5H10.5M10.5 6.5L7 3M10.5 6.5L7 10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                <path
+                  d="M2.5 6.5H10.5M10.5 6.5L7 3M10.5 6.5L7 10"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
             </button>
-            <a
+            {/* <a
               href="#architecture"
               className="btn-secondary btn-hero"
               onClick={(e) => {
                 e.preventDefault();
-                document.getElementById("architecture")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                document
+                  .getElementById("architecture")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
               }}
             >
               View Architecture
-            </a>
+            </a> */}
           </div>
 
           {/* Proof metrics */}
@@ -101,7 +113,13 @@ export function HeroSection({ onOpenWorkspace }: Props) {
       <div className="hero-scroll-hint" aria-hidden>
         <div className="hero-scroll-line" />
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-          <path d="M2 4L6 8L10 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          <path
+            d="M2 4L6 8L10 4"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       </div>
     </section>

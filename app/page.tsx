@@ -23,7 +23,9 @@ export default function Home() {
         <CtaSection onLaunch={handleOpenWorkspace} />
       </main>
       <footer className="landing-footer">
-        <span className="brand-name">Ledgr</span>
+        <span className="brand-name">
+          Ledgr<span className="brand-name-accent">.</span>
+        </span>
         <span className="landing-footer-meta">
           AI Wallet OS · Sepolia · v0.1.0
         </span>

@@ -21,7 +21,7 @@ export function CtaSection({ onLaunch }: Props) {
           }
         });
       },
-      { threshold: 0.2 }
+      { threshold: 0.2 },
     );
     io.observe(el);
     return () => io.disconnect();
@@ -32,8 +32,8 @@ export function CtaSection({ onLaunch }: Props) {
       <div className="cta-glow" aria-hidden />
       <div className="landing-container">
         <div className="cta-inner scroll-reveal">
-          <div className="cta-eyebrow">
-            <span className="hero-eyebrow-dot" aria-hidden />
+          <div className="cta-eyebrow mono">
+            {/* <span className="hero-eyebrow-dot" aria-hidden /> */}
             Get started
           </div>
           <h2 className="cta-title">
@@ -43,12 +43,23 @@ export function CtaSection({ onLaunch }: Props) {
           </h2>
           <p className="cta-desc">
             Connect your wallet, describe your intent, and let Ledgr handle
-            simulation, execution, and audit — with full transparency at every step.
+            simulation, execution, and audit — with full transparency at every
+            step.
           </p>
-          <button type="button" className="btn-primary btn-lg cta-btn" onClick={onLaunch}>
+          <button
+            type="button"
+            className="btn-primary btn-lg cta-btn mono"
+            onClick={onLaunch}
+          >
             Launch Ledgr
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M3 7H11M11 7L7.5 3.5M11 7L7.5 10.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              <path
+                d="M3 7H11M11 7L7.5 3.5M11 7L7.5 10.5"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
           </button>
           <p className="cta-note">Sepolia testnet · No real funds at risk</p>

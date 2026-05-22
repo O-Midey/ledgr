@@ -24,7 +24,9 @@ export function LandingNav({ onOpenWorkspace }: Props) {
 
   // Close menu on resize to desktop
   useEffect(() => {
-    const onResize = () => { if (window.innerWidth > 768) setMenuOpen(false); };
+    const onResize = () => {
+      if (window.innerWidth > 768) setMenuOpen(false);
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -34,26 +36,20 @@ export function LandingNav({ onOpenWorkspace }: Props) {
     // Let the menu close animation finish before scrolling
     setTimeout(() => {
       const id = href.replace("#", "");
-      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document
+        .getElementById(id)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 240);
   };
 
   return (
     <>
       <nav className={`landing-nav ${scrolled ? "landing-nav-scrolled" : ""}`}>
-        {/* Brand */}
         <a href="#" className="landing-brand" aria-label="Ledgr home">
-          <span className="brand-mark" aria-hidden>
-            <svg width="14" height="14" viewBox="0 0 18 18" fill="none">
-              <path d="M4 13V5L9 2L14 5V13L9 16L4 13Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-              <path d="M9 7V11" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-            </svg>
+          <span className="brand-name">
+            Ledgr<span className="brand-name-accent">.</span>
           </span>
-          <span className="brand-name">Ledgr</span>
-          <span className="nav-network-badge">
-            <span className="nav-network-dot" />
-            Sepolia
-          </span>
+          <span className="nav-network-badge mono">Sepolia</span>
         </a>
 
         {/* Desktop links */}
@@ -66,7 +62,9 @@ export function LandingNav({ onOpenWorkspace }: Props) {
               onClick={(e) => {
                 e.preventDefault();
                 const id = l.href.replace("#", "");
-                document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                document
+                  .getElementById(id)
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
               }}
             >
               {l.label}
@@ -78,12 +76,18 @@ export function LandingNav({ onOpenWorkspace }: Props) {
         <div className="nav-right">
           <button
             type="button"
-            className="btn-primary btn-sm nav-cta"
+            className="btn-primary btn-sm nav-cta mono "
             onClick={onOpenWorkspace}
           >
-            Try Ledgr
+            TRY LEDGR{" "}
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M2.5 6H9.5M9.5 6L6.5 3M9.5 6L6.5 9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+              <path
+                d="M2.5 6H9.5M9.5 6L6.5 3M9.5 6L6.5 9"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
           </button>
 
@@ -103,14 +107,20 @@ export function LandingNav({ onOpenWorkspace }: Props) {
       </nav>
 
       {/* Mobile menu */}
-      <div className={`nav-mobile-menu ${menuOpen ? "open" : ""}`} aria-hidden={!menuOpen}>
+      <div
+        className={`nav-mobile-menu ${menuOpen ? "open" : ""}`}
+        aria-hidden={!menuOpen}
+      >
         <div className="nav-mobile-inner">
           {NAV_LINKS.map((l) => (
             <a
               key={l.href}
               href={l.href}
               className="nav-mobile-link"
-              onClick={(e) => { e.preventDefault(); handleNavClick(l.href); }}
+              onClick={(e) => {
+                e.preventDefault();
+                handleNavClick(l.href);
+              }}
             >
               {l.label}
             </a>
@@ -118,7 +128,10 @@ export function LandingNav({ onOpenWorkspace }: Props) {
           <button
             type="button"
             className="btn-primary nav-mobile-cta"
-            onClick={() => { handleNavClick(""); onOpenWorkspace(); }}
+            onClick={() => {
+              handleNavClick("");
+              onOpenWorkspace();
+            }}
           >
             Try Ledgr
           </button>
@@ -127,7 +140,10 @@ export function LandingNav({ onOpenWorkspace }: Props) {
 
       {/* Backdrop */}
       {menuOpen && (
-        <div className="nav-mobile-backdrop" onClick={() => setMenuOpen(false)} />
+        <div
+          className="nav-mobile-backdrop"
+          onClick={() => setMenuOpen(false)}
+        />
       )}
     </>
   );
