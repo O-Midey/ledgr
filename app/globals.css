@@ -1995,8 +1995,12 @@ a {
   flex-shrink: 0;
   transition: background 220ms var(--ease);
 }
-.reasoning-step-dot.done { background: var(--success); }
-.reasoning-step-dot.error { background: var(--danger); }
+.reasoning-step-dot.done {
+  background: var(--success);
+}
+.reasoning-step-dot.error {
+  background: var(--danger);
+}
 .reasoning-step-dot.running {
   background: var(--accent);
   animation: pulse-dot 1.8s ease-in-out infinite;
@@ -2031,13 +2035,13 @@ a {
 }
 .reasoning-step-kind.kind-tool {
   color: var(--accent);
-  border-color: rgba(0,212,170,0.2);
-  background: rgba(0,212,170,0.06);
+  border-color: rgba(0, 212, 170, 0.2);
+  background: rgba(0, 212, 170, 0.06);
 }
 .reasoning-step-kind.kind-think {
   color: #a78bfa;
-  border-color: rgba(167,139,250,0.2);
-  background: rgba(167,139,250,0.06);
+  border-color: rgba(167, 139, 250, 0.2);
+  background: rgba(167, 139, 250, 0.06);
 }
 .reasoning-step-kind.kind-input,
 .reasoning-step-kind.kind-step {
@@ -2255,8 +2259,12 @@ a {
   font-family: inherit;
   transition: background 0.15s;
 }
-.activity-trace-toggle:hover { background: var(--s2); }
-.activity-trace-label { color: var(--text-3); }
+.activity-trace-toggle:hover {
+  background: var(--s2);
+}
+.activity-trace-label {
+  color: var(--text-3);
+}
 .activity-trace-count {
   font-size: 10px;
   font-family: var(--font-geist-mono), monospace;
@@ -2287,8 +2295,12 @@ a {
   background: var(--border-strong);
   flex-shrink: 0;
 }
-.activity-dot.done { background: var(--success); }
-.activity-dot.error { background: var(--danger); }
+.activity-dot.done {
+  background: var(--success);
+}
+.activity-dot.error {
+  background: var(--danger);
+}
 .activity-dot.running {
   background: var(--accent);
   animation: pulse-dot 1.8s ease-in-out infinite;
@@ -3338,7 +3350,8 @@ summary:focus-visible {
   position: fixed;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%) scale(0.95);
+  transform: translate3d(-50%, -50%, 0) scale(0.98);
+  transform-origin: center center;
   width: 90%;
   max-width: 400px;
   max-height: 70vh;
@@ -3350,14 +3363,16 @@ summary:focus-visible {
   z-index: 100;
   opacity: 0;
   pointer-events: none;
-  transition: all 200ms var(--ease);
+  transition:
+    opacity 220ms var(--ease),
+    transform 220ms var(--ease);
+  will-change: opacity, transform;
 }
 
 .address-book-panel.open {
   opacity: 1;
   pointer-events: auto;
-  transform: translate(-50%, -50%) scale(1);
-  animation: modal-card-in 300ms var(--ease);
+  transform: translate3d(-50%, -50%, 0) scale(1);
 }
 
 .address-book-header {
