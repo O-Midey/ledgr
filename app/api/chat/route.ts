@@ -1,5 +1,12 @@
 import { openai } from "@ai-sdk/openai";
-import { streamText, stepCountIs, tool, convertToModelMessages } from "ai";
+import {
+  streamText,
+  stepCountIs,
+  tool,
+  convertToModelMessages,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+} from "ai";
 import { z } from "zod";
 
 /** JSON replacer that serializes BigInt as a string to avoid serialization errors. */
@@ -32,6 +39,40 @@ function resolveFromAddress(connected: string | null): string {
 }
 
 const MAX_STEPS = parseInt(process.env.MAX_STEPS_PER_TURN ?? "10", 10);
+
+const INJECTION_REFUSAL =
+  "I can't share my configuration. How can I help you with your wallet?";
+
+/**
+ * Emit a single canned assistant message as a UI-message stream.
+ *
+ * The client uses `useChat` with `DefaultChatTransport`, which expects the
+ * SSE UI-message protocol — returning plain JSON here would surface as a failed
+ * request instead of rendering the message. Used for the injection refusal.
+ */
+function streamAssistantText(
+  text: string,
+  sessionId: string,
+  needsCookie: boolean,
+): Response {
+  const stream = createUIMessageStream({
+    execute: ({ writer }) => {
+      const id = generateId();
+      writer.write({ type: "text-start", id });
+      writer.write({ type: "text-delta", id, delta: text });
+      writer.write({ type: "text-end", id });
+    },
+  });
+
+  const base = createUIMessageStreamResponse({ stream });
+  const headers = new Headers(base.headers);
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("X-Session-Id", sessionId);
+  if (needsCookie) {
+    headers.set("Set-Cookie", createSessionCookieHeader(sessionId));
+  }
+  return new Response(base.body, { status: base.status, headers });
+}
 
 function hasUsableOpenAIKey(): boolean {
   const key = process.env.OPENAI_API_KEY ?? "";
@@ -139,6 +180,7 @@ export async function POST(request: Request) {
   let body: {
     messages?: IncomingMessage[];
     connectedAddress?: string;
+    addressBook?: Array<{ alias: string; address: string }>;
   };
   try {
     body = await request.json();
@@ -151,11 +193,21 @@ export async function POST(request: Request) {
       ? body.connectedAddress.trim()
       : null;
   const effectiveConnectedAddress = bodyConnectedAddress ?? connectedAddress;
+  const addressBook: Array<{ alias: string; address: string }> = Array.isArray(
+    body.addressBook,
+  )
+    ? body.addressBook.filter(
+        (e) =>
+          typeof e?.alias === "string" &&
+          typeof e?.address === "string" &&
+          /^0x[0-9a-fA-F]{40}$/.test(e.address),
+      )
+    : [];
   const uiMessages = body.messages ?? [];
   const normalizedMessages = uiMessages.map(normalizeToUiMessage);
 
   const auditLog = new AuditLog(sessionId);
-  const gateway = new ExecutionGateway(auditLog);
+  const gateway = new ExecutionGateway(auditLog, sessionId);
   recordChatMessages(sessionId, normalizedMessages, effectiveConnectedAddress);
 
   // 2. Injection guard on last user message
@@ -172,11 +224,7 @@ export async function POST(request: Request) {
           toolName: undefined,
           context: { raw: lastUserText.slice(0, 100) },
         });
-        return Response.json({
-          role: "assistant",
-          content:
-            "I can't share my configuration. How can I help you with your wallet?",
-        });
+        return streamAssistantText(INJECTION_REFUSAL, sessionId, needsCookie);
       }
       return new Response("Bad Request", { status: 400 });
     }
@@ -198,7 +246,11 @@ export async function POST(request: Request) {
   const walletContext = effectiveConnectedAddress
     ? `The user's connected wallet address is: ${effectiveConnectedAddress}. Use it automatically when they say "my wallet", "my balance", "my address", etc.`
     : "No wallet is currently connected.";
-  const dynamicSystem = `${SYSTEM_PROMPT}\n\n## Current Context\n- Date/Time (UTC): ${now}\n- ${walletContext}`;
+  const addressBookContext =
+    addressBook.length > 0
+      ? `\n\n## Address Book\nThe user has saved these address aliases. Always use them when matching names:\n${addressBook.map((e) => `- "${e.alias}" → ${e.address}`).join("\n")}`
+      : "";
+  const dynamicSystem = `${SYSTEM_PROMPT}\n\n## Current Context\n- Date/Time (UTC): ${now}\n- ${walletContext}${addressBookContext}`;
 
   const result = streamText({
     model: openai("gpt-4o-mini"),
@@ -287,9 +339,19 @@ export async function POST(request: Request) {
         },
       }),
       resolveAddress: tool({
-        description: "Resolve a name or alias to an Ethereum address.",
-        inputSchema: z.object({ alias: addressSchema }),
+        description:
+          "Resolve a human-readable name or alias to an Ethereum address. Use this whenever the user refers to a recipient by a name instead of a 0x address.",
+        inputSchema: z.object({
+          alias: z.string().trim().min(1).max(100),
+        }),
         execute: async ({ alias }: { alias: string }) => {
+          // Check request-scoped address book first
+          const lower = alias.trim().toLowerCase();
+          const bookMatch = addressBook.find(
+            (e) => e.alias.toLowerCase() === lower,
+          );
+          if (bookMatch) return { alias, address: bookMatch.address };
+          // Fall back to gateway/tool for on-chain resolution
           const tc = buildToolCall({
             toolName: "resolveAddress",
             input: { alias },

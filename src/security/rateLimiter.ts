@@ -6,6 +6,17 @@ interface WindowRecord {
 }
 
 const store = new Map<string, WindowRecord>();
+const windowMs = 60_000; // 1 minute
+let lastSweep = Date.now();
+
+/** Drop expired windows so the per-IP map can't grow unbounded. */
+function sweepExpired(now: number): void {
+  if (now - lastSweep < windowMs) return;
+  lastSweep = now;
+  for (const [ip, record] of store) {
+    if (now - record.windowStart >= windowMs) store.delete(ip);
+  }
+}
 
 /**
  * Sliding-window rate limiter keyed by IP.
@@ -15,7 +26,7 @@ export function checkRateLimit(
   ip: string,
 ): { allowed: true } | { allowed: false; retryAfterMs: number } {
   const now = Date.now();
-  const windowMs = 60_000; // 1 minute
+  sweepExpired(now);
   const record = store.get(ip);
 
   if (!record || now - record.windowStart >= windowMs) {

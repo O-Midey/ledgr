@@ -1,5 +1,6 @@
 import type { AuditEntry } from "@/types/audit";
 import type { UIMessage } from "ai";
+import { GENESIS_HASH } from "@/lib/constants";
 
 type ChatMessage = { [key: string]: unknown } | UIMessage;
 
@@ -13,19 +14,40 @@ interface SessionState {
   chatMessages: ChatMessage[];
   walletAddress: string | null;
   walletHistory: WalletContextEvent[];
+  lastAccess: number;
 }
 
 const store = new Map<string, SessionState>();
+const MAX_SESSIONS = 1000;
+
+/** Evict the least-recently-accessed session when the cap is reached. */
+function evictIfNeeded(): void {
+  if (store.size < MAX_SESSIONS) return;
+  let oldestKey: string | null = null;
+  let oldest = Infinity;
+  for (const [key, state] of store) {
+    if (state.lastAccess < oldest) {
+      oldest = state.lastAccess;
+      oldestKey = key;
+    }
+  }
+  if (oldestKey) store.delete(oldestKey);
+}
 
 function getOrCreateSessionState(sessionId: string): SessionState {
   const existing = store.get(sessionId);
-  if (existing) return existing;
+  if (existing) {
+    existing.lastAccess = Date.now();
+    return existing;
+  }
 
+  evictIfNeeded();
   const created: SessionState = {
     auditEntries: [],
     chatMessages: [],
     walletAddress: null,
     walletHistory: [],
+    lastAccess: Date.now(),
   };
   store.set(sessionId, created);
   return created;
@@ -38,6 +60,17 @@ export function recordAuditEntry(sessionId: string, entry: AuditEntry): void {
 
 export function getAuditEntries(sessionId: string): readonly AuditEntry[] {
   return getOrCreateSessionState(sessionId).auditEntries;
+}
+
+/**
+ * Hash of the last persisted audit entry for a session, or GENESIS if none.
+ * Used to seed a new AuditLog so the hash chain stays continuous across
+ * requests instead of restarting from genesis each time.
+ */
+export function getLastAuditHash(sessionId: string): string {
+  const entries = getOrCreateSessionState(sessionId).auditEntries;
+  const last = entries[entries.length - 1];
+  return last?.hash ?? GENESIS_HASH;
 }
 
 export function recordChatMessages(

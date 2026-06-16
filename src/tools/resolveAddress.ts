@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { isAddress } from "viem";
+import { normalize } from "viem/ens";
 import type { Address } from "viem";
+import { getEnsClient } from "@/wallet/blockchainClient";
 
 // Known alias → address map (extend as needed)
 const ALIASES: Record<string, Address> = {};
@@ -30,8 +32,26 @@ export const resolveAddressTool = {
     }
 
     const lower = trimmed.toLowerCase();
-    const resolved = ALIASES[lower];
 
+    // ENS names resolve against mainnet (where ENS lives); the resolved address
+    // is still used for Sepolia transactions.
+    if (lower.endsWith(".eth")) {
+      try {
+        const address = await getEnsClient().getEnsAddress({
+          name: normalize(trimmed),
+        });
+        if (address) {
+          return { alias: trimmed, address };
+        }
+      } catch {
+        // Fall through to the friendly error below.
+      }
+      throw new Error(
+        `Could not resolve ENS name "${trimmed}". Double-check the name or provide a full 0x address.`,
+      );
+    }
+
+    const resolved = ALIASES[lower];
     if (!resolved) {
       throw new Error(
         `Unknown alias: "${trimmed}". Please provide a full Ethereum address.`,

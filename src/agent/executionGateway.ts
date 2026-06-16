@@ -26,7 +26,10 @@ const idempotencyStore = new IdempotencyStore();
  * Read-only tools skip steps 0, 3, 5, 8.
  */
 export class ExecutionGateway {
-  constructor(private readonly auditLog: AuditLog) {}
+  constructor(
+    private readonly auditLog: AuditLog,
+    private readonly sessionId?: string,
+  ) {}
 
   async execute<T = unknown>(call: ToolCall): Promise<ExecutionResult<T>> {
     const startedAt = nowMs();
@@ -135,6 +138,7 @@ export class ExecutionGateway {
           toolName: call.toolName,
           input: call.input,
           simulationPassed,
+          sessionId: this.sessionId,
         });
         await this.auditLog.append({
           eventType: "SUPERVISOR_APPROVED",
@@ -205,7 +209,7 @@ export class ExecutionGateway {
 
     // Record spend for supervisor tracking
     if (call.sideEffects) {
-      safetySupervisor.recordSpend(call.toolName, call.input);
+      safetySupervisor.recordSpend(call.toolName, call.input, this.sessionId);
     }
 
     // --- Step 8: Idempotency record ---
@@ -288,6 +292,7 @@ export class ExecutionGateway {
         toolName: call.toolName,
         input: call.input,
         simulationPassed,
+        sessionId: this.sessionId,
       });
       await this.auditLog.append({
         eventType: "SUPERVISOR_APPROVED",
