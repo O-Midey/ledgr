@@ -4,21 +4,18 @@ import dynamic from "next/dynamic";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
-import {
-  useChainId,
-  useAccount as useWagmiAccount,
-  useBalance,
-  useWaitForTransactionReceipt,
-} from "wagmi";
-import { formatEther, formatUnits } from "viem";
+import { useChainId, useAccount as useWagmiAccount, useBalance } from "wagmi";
 import { sepolia } from "viem/chains";
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import type { ToolUIPart, TxPreviewStatus } from "./TxPreviewCard";
+import type { ToolUIPart } from "./TxPreviewCard";
 import type { SuggestionChip } from "./ContextualChips";
 import type { AddressAlias } from "@/lib/useAddressBook";
+import { useAddressBook } from "@/lib/useAddressBook";
 import { isTxProposalOutput, type TxProposal } from "@/lib/txProposal";
 import { formatAuditForSidebar } from "@/audit/sessionStore";
 import { generateId } from "@/lib/utils";
+import { requestChatTitle } from "@/lib/generateTitle";
+import { useTxTracker, type TxNotice } from "@/lib/txTracker";
 
 const AssistantMessage = dynamic(
   () => import("./AssistantMessage").then((mod) => mod.AssistantMessage),
@@ -133,10 +130,51 @@ function getErrorMessage(error: unknown): string {
   return "The request did not complete. Please try again.";
 }
 
-const TX_STATUS_STORAGE_KEY = "ledgr-tx-status";
-const TX_NOTICES_STORAGE_KEY = "ledgr-tx-notices";
 const SESSION_ID_STORAGE_KEY = "ledgr-chat-session-id";
 const CHAT_MESSAGES_STORAGE_PREFIX = "ledgr-chat-messages:";
+const HANDLED_PROPOSALS_STORAGE_PREFIX = "ledgr-handled-proposals:";
+
+const MESSAGE_TIMES_STORAGE_PREFIX = "ledgr-msg-times:";
+
+/**
+ * Load stable per-message send times for this session. Without this, every
+ * message renders `new Date()` and shows the current clock on each re-render.
+ */
+function loadMessageTimes(sessionId: string): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(
+      `${MESSAGE_TIMES_STORAGE_PREFIX}${sessionId}`,
+    );
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, number>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Load the set of proposal idempotency keys the user has already acted on
+ * (confirmed or dismissed) for this session. Persisted so a page reload can't
+ * re-surface an already-signed transaction proposal and trigger a double-send.
+ */
+function loadHandledProposals(sessionId: string): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(
+      `${HANDLED_PROPOSALS_STORAGE_PREFIX}${sessionId}`,
+    );
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((k): k is string => typeof k === "string");
+  } catch {
+    return [];
+  }
+}
 
 function isValidUiMessage(value: unknown): value is UIMessage {
   if (!value || typeof value !== "object") return false;
@@ -151,7 +189,7 @@ function loadPersistedMessages(sessionId: string): UIMessage[] {
   if (typeof window === "undefined") return [];
 
   try {
-    const raw = sessionStorage.getItem(
+    const raw = localStorage.getItem(
       `${CHAT_MESSAGES_STORAGE_PREFIX}${sessionId}`,
     );
     if (!raw) return [];
@@ -180,34 +218,6 @@ function getOrCreateSessionId(): string {
   }
 }
 
-function loadPersistedTxStatus(): TxBackgroundStatus | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(TX_STATUS_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as TxBackgroundStatus;
-    if (!parsed || !parsed.idempotencyKey || !parsed.to || !parsed.valueEth) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function loadPersistedTxNotices(): LocalTxNotice[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(TX_NOTICES_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed as LocalTxNotice[];
-  } catch {
-    return [];
-  }
-}
-
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface AuditEntry {
@@ -222,74 +232,29 @@ interface AuditEntry {
   duration?: string;
 }
 
-interface TxBackgroundStatus {
-  hash?: `0x${string}`;
-  to: string;
-  valueEth: string;
-  idempotencyKey: string;
-  phase:
-    | "signature_requested"
-    | "submitted"
-    | "confirming"
-    | "confirmed"
-    | "reverted"
-    | "failed";
-  startedAt?: number; // timestamp when entered "submitted" phase
-  isStuck?: boolean; // true if in confirming >60s
-}
-
-interface LocalTxNotice {
-  id: string;
-  status: "confirmed" | "failed" | "reverted";
-  hash: `0x${string}`;
-  to: string;
-  valueEth: string;
-  blockNumber?: string;
-  gasUsed?: string;
-  effectiveGasPriceGwei?: string;
-  txFeeEth?: string;
-}
-
 interface QuickActionDraft {
   mode: "send" | "gas";
   initialAddress?: string;
   initialAmount?: string;
 }
 
-function receiptMetrics(receipt: unknown): {
-  blockNumber?: string;
-  gasUsed?: string;
-  effectiveGasPriceGwei?: string;
-  txFeeEth?: string;
-} {
-  const r = receipt as {
-    blockNumber?: bigint;
-    gasUsed?: bigint;
-    effectiveGasPrice?: bigint;
-  };
-
-  const blockNumber =
-    typeof r?.blockNumber === "bigint" ? r.blockNumber.toString() : undefined;
-  const gasUsed =
-    typeof r?.gasUsed === "bigint" ? r.gasUsed.toString() : undefined;
-  const effectiveGasPriceGwei =
-    typeof r?.effectiveGasPrice === "bigint"
-      ? Number(formatUnits(r.effectiveGasPrice, 9)).toFixed(2)
-      : undefined;
-  const txFeeEth =
-    typeof r?.effectiveGasPrice === "bigint" && typeof r?.gasUsed === "bigint"
-      ? Number(formatEther(r.effectiveGasPrice * r.gasUsed)).toFixed(6)
-      : undefined;
-
-  return { blockNumber, gasUsed, effectiveGasPriceGwei, txFeeEth };
-}
-
 // ── Main component ─────────────────────────────────────────────────────────
 
-export function ChatInterface() {
+export function ChatInterface({
+  sessionId: sessionIdProp,
+  needsTitle = false,
+  onTitle,
+  onTitleStart,
+}: {
+  sessionId?: string;
+  needsTitle?: boolean;
+  onTitle?: (title: string) => void;
+  onTitleStart?: () => void;
+} = {}) {
   const { isConnected, address } = useWagmiAccount();
   const chainId = useChainId();
   const isWrongNetwork = isConnected && chainId !== sepolia.id;
+  const { aliases } = useAddressBook();
 
   const { data: balanceData, isLoading: balanceLoading } = useBalance({
     address,
@@ -297,7 +262,11 @@ export function ChatInterface() {
     query: { enabled: isConnected && !!address },
   });
 
-  const sessionId = useMemo(() => getOrCreateSessionId(), []);
+  const sessionId = useMemo(
+    () => sessionIdProp ?? getOrCreateSessionId(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
   const persistedMessages = useMemo(
     () => loadPersistedMessages(sessionId),
     [sessionId],
@@ -310,31 +279,69 @@ export function ChatInterface() {
       }),
     [sessionId],
   );
-  const { messages, sendMessage, status, error, regenerate } = useChat({
-    id: sessionId,
-    messages: persistedMessages,
-    transport,
-  });
+  const [showRetry, setShowRetry] = useState(false);
+  const retriedRef = useRef(false);
+  const regenerateRef = useRef<(() => void) | null>(null);
+
+  const { messages, sendMessage, status, error, regenerate, setMessages } =
+    useChat({
+      id: sessionId,
+      messages: persistedMessages,
+      transport,
+      // Auto-retry once on transient errors only. Rate-limit / config /
+      // bad-request errors won't succeed on an immediate retry, so we surface
+      // the manual retry banner instead of wasting a request. Handling this in
+      // the error callback (vs an effect) avoids cascading-render setState.
+      onError: (err) => {
+        if (retriedRef.current) {
+          setShowRetry(true);
+          return;
+        }
+        retriedRef.current = true;
+        const msg = (
+          err instanceof Error ? err.message : String(err)
+        ).toLowerCase();
+        const nonRetryable =
+          msg.includes("429") ||
+          msg.includes("too many") ||
+          msg.includes("rate limit") ||
+          msg.includes("503") ||
+          msg.includes("not configured") ||
+          msg.includes("400") ||
+          msg.includes("bad request") ||
+          msg.includes("invalid");
+        if (nonRetryable) {
+          setShowRetry(true);
+        } else {
+          regenerateRef.current?.();
+        }
+      },
+    });
 
   const [input, setInput] = useState("");
-  const [showRetry, setShowRetry] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [addressBookOpen, setAddressBookOpen] = useState(false);
   const [addressSuggestionQuery, setAddressSuggestionQuery] = useState("");
   const [dismissedProposals, setDismissedProposals] = useState<Set<string>>(
-    () => new Set(),
+    () => new Set(loadHandledProposals(sessionId)),
   );
   const [serverAudit, setServerAudit] = useState<AuditEntry[]>([]);
-  const [txStatus, setTxStatus] = useState<TxBackgroundStatus | null>(() =>
-    loadPersistedTxStatus(),
-  );
-  const [txNotices, setTxNotices] = useState<LocalTxNotice[]>(() =>
-    loadPersistedTxNotices(),
-  );
+  const tracker = useTxTracker();
+  const sessionNotices = tracker.noticesForSession(sessionId);
+  // Write-once cache of per-message send times (id → epoch ms). Stamped lazily
+  // during render and persisted in an effect; avoids setState-in-effect.
+  const messageTimesRef = useRef<Record<string, number> | null>(null);
+  if (messageTimesRef.current === null) {
+    messageTimesRef.current = loadMessageTimes(sessionId);
+  }
+  const messageTimeFor = useCallback((id: string): number => {
+    const map = (messageTimesRef.current ??= {});
+    if (map[id] == null) map[id] = Date.now();
+    return map[id];
+  }, []);
   const [quickActionDraft, setQuickActionDraft] =
     useState<QuickActionDraft | null>(null);
-  const retriedRef = useRef(false);
-  const notifiedTxHashRef = useRef<string | null>(null);
+  const titleRequestedRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isNearBottomRef = useRef(true);
@@ -375,15 +382,10 @@ export function ChatInterface() {
     });
   }, [messages, showThinking, isStreaming]);
 
-  // ── Auto-retry on error ──
+  // Keep the latest regenerate available to the onError callback above.
   useEffect(() => {
-    if (error && !retriedRef.current) {
-      retriedRef.current = true;
-      regenerate();
-    } else if (error && retriedRef.current) {
-      setShowRetry(true);
-    }
-  }, [error, regenerate]);
+    regenerateRef.current = regenerate;
+  }, [regenerate]);
 
   // ── Textarea auto-resize on input change (shrinks too) ──
   useEffect(() => {
@@ -393,26 +395,39 @@ export function ChatInterface() {
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 36), 160)}px`;
   }, [input]);
 
-  // ── Hydrate chat from server session on mount ──
+  // ── Focus the composer on load so opening / starting a chat lands ready ──
+  // The component remounts per conversation (keyed), so this also covers
+  // switching and starting a new chat.
   useEffect(() => {
-    const hydrateFromServer = async () => {
+    if (isWrongNetwork) return;
+    textareaRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Hydrate chat from the server session when local history is empty ──
+  // (e.g. localStorage was cleared, or opened on another device). Runs once on
+  // mount; local history always wins when present.
+  useEffect(() => {
+    if (persistedMessages.length > 0) return;
+    let cancelled = false;
+    (async () => {
       try {
         const res = await fetch("/api/session", {
           headers: { "x-session-id": sessionId },
         });
         if (!res.ok) return;
-        const data = await res.json() as { messages?: UIMessage[]; auditEntries?: unknown[] };
-        // If server has messages and we don't yet, hydrate
-        if (data.messages && Array.isArray(data.messages) && data.messages.length > 0 && messages.length === 0) {
-          // The transport and useChat hooks handle merging with initial state
-          // We rely on the server-backed session store to provide canonical history
-        }
+        const data = (await res.json()) as { messages?: unknown };
+        if (cancelled || !Array.isArray(data.messages)) return;
+        const valid = data.messages.filter(isValidUiMessage);
+        if (valid.length > 0) setMessages(valid);
       } catch {
         /* network error during hydration; continue with empty */
       }
+    })();
+    return () => {
+      cancelled = true;
     };
-    hydrateFromServer();
-  }, [sessionId]);
+  }, [sessionId, persistedMessages, setMessages]);
 
   const submitPrompt = useCallback(
     async (text: string) => {
@@ -430,11 +445,15 @@ export function ChatInterface() {
         {
           body: {
             connectedAddress: address,
+            addressBook: aliases.map((a) => ({
+              alias: a.alias,
+              address: a.address,
+            })),
           },
         },
       );
     },
-    [isWrongNetwork, isLoading, sendMessage, address],
+    [isWrongNetwork, isLoading, sendMessage, address, aliases],
   );
 
   const handleContextualChip = useCallback(
@@ -536,43 +555,73 @@ export function ChatInterface() {
     try {
       const key = `${CHAT_MESSAGES_STORAGE_PREFIX}${sessionId}`;
       if (messages.length === 0) {
-        sessionStorage.removeItem(key);
+        localStorage.removeItem(key);
         return;
       }
-      // Keep recent context only to avoid unbounded growth.
-      sessionStorage.setItem(key, JSON.stringify(messages.slice(-40)));
+      localStorage.setItem(key, JSON.stringify(messages.slice(-40)));
     } catch {
       /* ignore */
     }
   }, [messages, sessionId]);
 
+  // Persist message send times after render (touches localStorage only — the
+  // stamps themselves are assigned lazily during render via messageTimeFor).
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      if (
-        !txStatus ||
-        txStatus.phase === "confirmed" ||
-        txStatus.phase === "reverted" ||
-        txStatus.phase === "failed"
-      ) {
-        localStorage.removeItem(TX_STATUS_STORAGE_KEY);
-      } else {
-        localStorage.setItem(TX_STATUS_STORAGE_KEY, JSON.stringify(txStatus));
-      }
+      localStorage.setItem(
+        `${MESSAGE_TIMES_STORAGE_PREFIX}${sessionId}`,
+        JSON.stringify(messageTimesRef.current ?? {}),
+      );
     } catch {
       /* ignore */
     }
-  }, [txStatus]);
+  }, [messages, sessionId]);
 
+  // Generate a concise conversation title from the first user message, once.
+  // Flows through the conversations data layer so the panel updates live.
+  useEffect(() => {
+    if (!needsTitle || titleRequestedRef.current || !onTitle) return;
+    const firstUser = messages.find((m) => m.role === "user");
+    if (!firstUser) return;
+    const text = firstUser.parts
+      .filter((p) => p.type === "text")
+      .map((p) => (p as { type: "text"; text: string }).text)
+      .join("")
+      .trim();
+    if (!text) return;
+    titleRequestedRef.current = true;
+    onTitleStart?.();
+    void requestChatTitle(text).then((title) => {
+      if (title) onTitle(title);
+    });
+  }, [messages, needsTitle, onTitle, onTitleStart]);
+
+  // Refresh the audit trail when a new receipt lands for this chat. The
+  // confirmation POST now happens in the tx tracker (possibly while another
+  // conversation is open), so the entry appears after the usual status-driven
+  // refresh would have run.
+  const prevNoticeCountRef = useRef(sessionNotices.length);
+  useEffect(() => {
+    if (sessionNotices.length > prevNoticeCountRef.current) {
+      void refreshAudit();
+    }
+    prevNoticeCountRef.current = sessionNotices.length;
+  }, [sessionNotices.length, refreshAudit]);
+
+  // Persist handled (confirmed/dismissed) proposal keys so a reload can't
+  // re-surface an already-signed proposal and allow a double-send.
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const recent = txNotices.slice(-20);
-      localStorage.setItem(TX_NOTICES_STORAGE_KEY, JSON.stringify(recent));
+      localStorage.setItem(
+        `${HANDLED_PROPOSALS_STORAGE_PREFIX}${sessionId}`,
+        JSON.stringify(Array.from(dismissedProposals)),
+      );
     } catch {
       /* ignore */
     }
-  }, [txNotices]);
+  }, [dismissedProposals, sessionId]);
 
   const clientAudit = useMemo<AuditEntry[]>(() => {
     const entries: AuditEntry[] = [];
@@ -627,15 +676,22 @@ export function ChatInterface() {
 
   const auditEntries = serverAudit.length > 0 ? serverAudit : clientAudit;
 
-  const pendingProposal = useMemo(
-    () => findPendingProposal(messages, dismissedProposals),
-    [messages, dismissedProposals],
-  );
+  const pendingProposal = useMemo(() => {
+    const proposal = findPendingProposal(messages, dismissedProposals);
+    if (!proposal) return null;
+    // A transaction for this proposal is already being tracked — don't re-open
+    // the confirmation modal (guards against double-send on re-render).
+    if (tracker.isTracked(proposal.idempotencyKey)) {
+      return null;
+    }
+    return proposal;
+  }, [messages, dismissedProposals, tracker]);
 
   const hasMessages = messages.length > 0;
 
   const txLiveAnnouncement = useMemo(() => {
-    const latestNotice = txNotices[txNotices.length - 1];
+    const notices = tracker.noticesForSession(sessionId);
+    const latestNotice = notices[notices.length - 1];
     if (latestNotice) {
       if (latestNotice.status === "confirmed") {
         return `Transaction confirmed. ${latestNotice.valueEth} ETH sent to ${latestNotice.to}.`;
@@ -646,169 +702,25 @@ export function ChatInterface() {
       return "Transaction confirmation delayed.";
     }
 
-    if (!txStatus) return "";
-    if (txStatus.phase === "signature_requested") {
+    const statuses = tracker.statusesForSession(sessionId);
+    const latest = statuses[statuses.length - 1];
+    if (!latest) return "";
+    if (latest.phase === "signature_requested") {
       return "Transaction signature requested in wallet.";
     }
-    if (txStatus.phase === "submitted") {
+    if (latest.phase === "submitted") {
       return "Transaction submitted to Sepolia.";
     }
-    if (txStatus.phase === "confirming") {
-      return txStatus.isStuck
+    if (latest.phase === "confirming") {
+      return latest.isStuck
         ? "Transaction is taking longer than usual to confirm."
         : "Waiting for on-chain confirmation.";
     }
-    if (txStatus.phase === "failed") {
+    if (latest.phase === "failed") {
       return "Transaction confirmation failed.";
     }
     return "";
-  }, [txStatus, txNotices]);
-
-  const {
-    isSuccess: txConfirmed,
-    isError: txFailed,
-    data: txReceipt,
-  } = useWaitForTransactionReceipt({
-    hash: txStatus?.hash,
-    chainId: sepolia.id,
-    query: {
-      enabled:
-        !!txStatus?.hash &&
-        (txStatus?.phase === "submitted" || txStatus?.phase === "confirming"),
-      retry: 5,
-    },
-  });
-
-  useEffect(() => {
-    if (!txStatus || txStatus.phase !== "submitted") return;
-    const id = setTimeout(() => {
-      setTxStatus((prev) =>
-        prev && prev.phase === "submitted"
-          ? {
-              ...prev,
-              phase: "confirming",
-              startedAt: prev.startedAt || Date.now(),
-            }
-          : prev,
-      );
-    }, 700);
-    return () => clearTimeout(id);
-  }, [txStatus]);
-
-  // Detect stuck tx (>60s in confirming)
-  useEffect(() => {
-    if (!txStatus || txStatus.phase !== "confirming" || !txStatus.startedAt)
-      return;
-    const checkStuck = setInterval(() => {
-      setTxStatus((prev) => {
-        if (!prev || prev.phase !== "confirming" || !prev.startedAt)
-          return prev;
-        const elapsedMs = Date.now() - prev.startedAt;
-        const isStuckNow = elapsedMs > 60_000;
-        return { ...prev, isStuck: isStuckNow };
-      });
-    }, 5000); // Check every 5s
-    return () => clearInterval(checkStuck);
-  }, [txStatus]);
-
-  useEffect(() => {
-    if (!txStatus || txStatus.phase !== "confirming") return;
-    if (!txStatus.hash) return;
-    if (!txConfirmed) return;
-
-    if (txReceipt?.status === "reverted") {
-      const metrics = receiptMetrics(txReceipt);
-      const timeoutId = window.setTimeout(() => {
-        setTxStatus((prev) => (prev ? { ...prev, phase: "reverted" } : prev));
-        if (txStatus.hash && notifiedTxHashRef.current !== txStatus.hash) {
-          notifiedTxHashRef.current = txStatus.hash;
-          setTxNotices((prev) => [
-            ...prev,
-            {
-              id: `failed-${txStatus.hash}`,
-              status: "reverted",
-              hash: txStatus.hash as `0x${string}`,
-              to: txStatus.to,
-              valueEth: txStatus.valueEth,
-              ...metrics,
-            },
-          ]);
-        }
-      }, 0);
-      return () => window.clearTimeout(timeoutId);
-    }
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        await fetch("/api/tx/confirm", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId,
-            hash: txStatus.hash,
-            valueEth: txStatus.valueEth,
-            to: txStatus.to,
-            idempotencyKey: txStatus.idempotencyKey,
-          }),
-        });
-      } catch {
-        // Ignore, on-chain confirmation is source of truth.
-      }
-
-      if (!cancelled) {
-        const metrics = receiptMetrics(txReceipt);
-        setTxStatus((prev) =>
-          prev && prev.hash === txStatus.hash
-            ? { ...prev, phase: "confirmed" }
-            : prev,
-        );
-        if (txStatus.hash && notifiedTxHashRef.current !== txStatus.hash) {
-          notifiedTxHashRef.current = txStatus.hash;
-          setTxNotices((prev) => [
-            ...prev,
-            {
-              id: `confirmed-${txStatus.hash}`,
-              status: "confirmed",
-              hash: txStatus.hash as `0x${string}`,
-              to: txStatus.to,
-              valueEth: txStatus.valueEth,
-              ...metrics,
-            },
-          ]);
-        }
-        refreshAudit();
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [txConfirmed, txStatus, txReceipt, sessionId, refreshAudit]);
-
-  useEffect(() => {
-    if (!txStatus || txStatus.phase !== "confirming") return;
-    if (!txStatus.hash) return;
-    if (!txFailed) return;
-    const timeoutId = window.setTimeout(() => {
-      setTxStatus((prev) => (prev ? { ...prev, phase: "failed" } : prev));
-      if (txStatus.hash && notifiedTxHashRef.current !== txStatus.hash) {
-        notifiedTxHashRef.current = txStatus.hash;
-        setTxNotices((prev) => [
-          ...prev,
-          {
-            id: `failed-${txStatus.hash}`,
-            status: "failed",
-            hash: txStatus.hash as `0x${string}`,
-            to: txStatus.to,
-            valueEth: txStatus.valueEth,
-          },
-        ]);
-      }
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, [txFailed, txStatus]);
+  }, [tracker, sessionId]);
 
   const handleTxSubmitted = useCallback(
     (hash: `0x${string}`, proposal: TxProposal) => {
@@ -817,36 +729,30 @@ export function ChatInterface() {
           new Set(s).add(pendingProposal.idempotencyKey),
         );
       }
-      setTxStatus({
+      // Hand off to the account-scoped tracker, tagged with this conversation so
+      // the receipt routes back here even if the user is in another chat when it
+      // confirms. The tracker owns the chain watcher and confirmation POST.
+      tracker.track({
         hash,
         to: proposal.to,
         valueEth: proposal.valueEth,
         idempotencyKey: proposal.idempotencyKey,
-        phase: "submitted",
-        startedAt: Date.now(),
+        sessionId,
       });
     },
-    [pendingProposal],
+    [pendingProposal, tracker, sessionId],
   );
 
   const handleTxLifecycleChange = useCallback(
     (_phase: "signature_requested", proposal: TxProposal) => {
-      setTxStatus((prev) => {
-        if (prev && prev.idempotencyKey === proposal.idempotencyKey) {
-          return { ...prev, phase: "signature_requested" };
-        }
-        return {
-          hash: prev?.hash,
-          to: proposal.to,
-          valueEth: proposal.valueEth,
-          idempotencyKey: proposal.idempotencyKey,
-          phase: "signature_requested",
-          startedAt: undefined,
-          isStuck: false,
-        };
+      tracker.setSignatureRequested({
+        to: proposal.to,
+        valueEth: proposal.valueEth,
+        idempotencyKey: proposal.idempotencyKey,
+        sessionId,
       });
     },
-    [],
+    [tracker, sessionId],
   );
 
   return (
@@ -877,13 +783,43 @@ export function ChatInterface() {
           {/* Empty state */}
           {!hasMessages && (
             <div className="empty-state animate-fade-in">
+              {/* <div className="empty-state-mark" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M12 3 3 7.5 12 12l9-4.5L12 3Z"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M3 12l9 4.5L21 12"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M3 16.5 12 21l9-4.5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </div> */}
               <div className="empty-state-title">
-                Ledgr can carry out wallet actions on Sepolia.
+                {isConnected
+                  ? "What can I do for your wallet?"
+                  : "Your AI wallet copilot on Sepolia"}
               </div>
               <div className="empty-state-sub">
                 {isConnected
-                  ? `${address?.slice(0, 6)}…${address?.slice(-4)} · Sepolia`
-                  : "Connect your wallet to check balances, estimate gas, send ETH on Sepolia, and inspect the audit trail."}
+                  ? `Connected ${address?.slice(0, 6)}…${address?.slice(-4)}. Ask me to check balances, estimate gas, or send ETH — every action is simulated and audited.`
+                  : "Connect your wallet to check balances, estimate gas, send ETH, and inspect a tamper-evident audit trail — all on the Sepolia testnet."}
+              </div>
+              <div className="empty-state-caps" aria-hidden="true">
+                <span className="cap-pill">Balances</span>
+                <span className="cap-pill">Gas estimates</span>
+                <span className="cap-pill">Send ETH</span>
+                <span className="cap-pill">Audit trail</span>
               </div>
             </div>
           )}
@@ -901,6 +837,27 @@ export function ChatInterface() {
             const toolParts = m.parts.filter(
               (p) => p.type.startsWith("tool-") || p.type === "dynamic-tool",
             ) as unknown[] as ToolUIPart[];
+
+            // The actual tools this message executed — used to drive contextual
+            // quick actions off real work done, not fuzzy text matching.
+            const executedTools = m.parts
+              .filter(
+                (p) => p.type.startsWith("tool-") || p.type === "dynamic-tool",
+              )
+              .map((p) => {
+                const tp = p as unknown as {
+                  toolName?: string;
+                  state?: string;
+                  input?: unknown;
+                  output?: unknown;
+                };
+                return {
+                  name: tp.toolName ?? p.type.replace(/^tool-/, ""),
+                  input: tp.input,
+                  output:
+                    tp.state === "output-available" ? tp.output : undefined,
+                };
+              });
 
             if (m.role === "user") {
               return (
@@ -945,10 +902,36 @@ export function ChatInterface() {
                       </div>
                     )}
                   </div>
-                  <div className="msg-timestamp">{formatTime(new Date())}</div>
+                  <div className="msg-timestamp">
+                    {formatTime(new Date(messageTimeFor(m.id)))}
+                  </div>
                 </div>
               );
             }
+
+            // Resolve the tracked status for this message's send-tx proposal (if
+            // any) so the inline preview reflects live phase — tracking lives at
+            // the account level now and survives conversation switches.
+            const sendTxKey = (() => {
+              for (const p of m.parts) {
+                const part = p as {
+                  type?: string;
+                  state?: string;
+                  output?: unknown;
+                };
+                if (
+                  part.type?.includes("sendTransaction") &&
+                  part.state === "output-available" &&
+                  isTxProposalOutput(part.output)
+                ) {
+                  return part.output.proposal.idempotencyKey;
+                }
+              }
+              return null;
+            })();
+            const inlineTxStatus = sendTxKey
+              ? tracker.statusForKey(sendTxKey)
+              : null;
 
             return (
               <div key={m.id} className="msg-row assistant">
@@ -957,25 +940,32 @@ export function ChatInterface() {
                     content={textContent}
                     toolParts={toolParts}
                     isStreaming={isLastAssistant && isStreaming}
-                    txStatus={txStatus as TxPreviewStatus | null}
+                    txStatus={inlineTxStatus}
                   />
-                  {isLastAssistant && !isStreaming && (
+                  {isLastAssistant && !isLoading && !pendingProposal && (
                     <ContextualChips
+                      tools={executedTools}
                       messageText={textContent}
                       onChipClick={handleContextualChip}
-                      disabled={isLoading || isWrongNetwork}
+                      disabled={isWrongNetwork}
                     />
                   )}
                 </div>
-                <div className="msg-timestamp">{formatTime(new Date())}</div>
+                <div className="msg-timestamp">
+                  {formatTime(new Date(messageTimeFor(m.id)))}
+                </div>
               </div>
             );
           })}
 
-          {txNotices.map((notice) => (
+          {sessionNotices.map((notice) => (
             <div key={notice.id} className="msg-row assistant">
               <TxCompletionNotice notice={notice} />
-              <div className="msg-timestamp">{formatTime(new Date())}</div>
+              <div className="msg-timestamp">
+                {formatTime(
+                  new Date(notice.createdAt ?? messageTimeFor(notice.id)),
+                )}
+              </div>
             </div>
           ))}
 
@@ -1060,7 +1050,42 @@ export function ChatInterface() {
               />
             )}
 
-            {!hasMessages && (
+            {pendingProposal &&
+              !isWrongNetwork &&
+              !quickActionDraft &&
+              !isLoading && (
+                <div className="suggestion-chips">
+                  <button
+                    type="button"
+                    className="suggestion-chip suggestion-chip--confirm"
+                    disabled={isLoading}
+                    onClick={() => {
+                      // Click the confirm button inside the modal directly
+                      document
+                        .querySelector<HTMLButtonElement>("#tx-confirm-btn")
+                        ?.click();
+                    }}
+                  >
+                    ✅ Confirm — {pendingProposal.valueEth} ETH →{" "}
+                    {pendingProposal.to.slice(0, 6)}…
+                    {pendingProposal.to.slice(-4)}
+                  </button>
+                  <button
+                    type="button"
+                    className="suggestion-chip"
+                    disabled={isLoading}
+                    onClick={() =>
+                      setDismissedProposals((s) =>
+                        new Set(s).add(pendingProposal.idempotencyKey),
+                      )
+                    }
+                  >
+                    ✕ Cancel
+                  </button>
+                </div>
+              )}
+
+            {!hasMessages && !pendingProposal && !isLoading && (
               <div className="suggestion-chips">
                 {SUGGESTIONS.map((s) => (
                   <button
@@ -1256,7 +1281,7 @@ export function ChatInterface() {
   );
 }
 
-function TxCompletionNotice({ notice }: { notice: LocalTxNotice }) {
+function TxCompletionNotice({ notice }: { notice: TxNotice }) {
   const shortTo = `${notice.to.slice(0, 6)}…${notice.to.slice(-4)}`;
   const shortHash = `${notice.hash.slice(0, 10)}…${notice.hash.slice(-6)}`;
   const explorer = `https://sepolia.etherscan.io/tx/${notice.hash}`;

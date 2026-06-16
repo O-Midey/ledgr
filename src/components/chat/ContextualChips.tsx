@@ -14,67 +14,56 @@ export interface SuggestionChip {
   initialAmount?: string;
 }
 
+/** A tool the assistant actually executed in a message. */
+export interface ExecutedTool {
+  name: string;
+  input?: unknown;
+  output?: unknown;
+}
+
 export interface ContextualChipsProps {
+  tools: ExecutedTool[];
   messageText: string;
   onChipClick: (chip: SuggestionChip) => void;
   disabled?: boolean;
 }
 
-function extractAddress(text: string): string | undefined {
-  return text.match(/0x[a-fA-F0-9]{40}/)?.[0];
+/**
+ * Map each tool to the follow-up pattern it should surface. `sendTransaction`
+ * is intentionally absent — its proposal is handled by the confirm modal, so we
+ * never show "send another" mid-flow.
+ */
+const TOOL_TO_PATTERN: Record<string, string> = {
+  getBalance: "balance-checked",
+  estimateGas: "gas-estimated",
+  getTransactionHistory: "history-viewed",
+  resolveAddress: "address-resolved",
+  getTokenPrice: "price-checked",
+};
+
+function readString(value: unknown, key: string): string | undefined {
+  if (value && typeof value === "object" && key in value) {
+    const v = (value as Record<string, unknown>)[key];
+    return typeof v === "string" ? v : undefined;
+  }
+  return undefined;
 }
 
-// Pattern detection for different response types
-function detectResponsePattern(text: string): string | null {
-  const lowerText = text.toLowerCase();
+/** Prefer a structured address from the tool over scraping the prose. */
+function resolveAddress(tool: ExecutedTool, text: string): string | undefined {
+  return (
+    readString(tool.output, "address") ??
+    readString(tool.input, "to") ??
+    readString(tool.input, "address") ??
+    text.match(/0x[a-fA-F0-9]{40}/)?.[0]
+  );
+}
 
-  // Transaction submitted/confirmed
-  if (
-    lowerText.includes("submitted") ||
-    lowerText.includes("confirmed") ||
-    lowerText.includes("hash") ||
-    lowerText.includes("0x")
-  ) {
-    return "transaction-completed";
+/** The last tool whose result has a meaningful follow-up. */
+function lastRelevantTool(tools: ExecutedTool[]): ExecutedTool | null {
+  for (let i = tools.length - 1; i >= 0; i--) {
+    if (TOOL_TO_PATTERN[tools[i].name]) return tools[i];
   }
-
-  // Balance check
-  if (
-    lowerText.includes("balance") ||
-    lowerText.includes("eth") ||
-    lowerText.includes("sepolia")
-  ) {
-    return "balance-checked";
-  }
-
-  // Gas estimation
-  if (
-    lowerText.includes("gas") ||
-    lowerText.includes("fee") ||
-    lowerText.includes("cost")
-  ) {
-    return "gas-estimated";
-  }
-
-  // Transaction history
-  if (
-    lowerText.includes("transaction") ||
-    lowerText.includes("transfer") ||
-    lowerText.includes("history") ||
-    lowerText.includes("recent")
-  ) {
-    return "history-viewed";
-  }
-
-  // Address resolution
-  if (
-    lowerText.includes("address") ||
-    lowerText.includes("resolved") ||
-    lowerText.includes("ens")
-  ) {
-    return "address-resolved";
-  }
-
   return null;
 }
 
@@ -83,29 +72,6 @@ function getChipsForPattern(
   extractedAddress?: string,
 ): SuggestionChip[] {
   const chipMap: Record<string, SuggestionChip[]> = {
-    "transaction-completed": [
-      {
-        label: "View Receipt",
-        icon: "📋",
-        action: "Show me the transaction details and receipt",
-        description: "Full transaction breakdown",
-        kind: "prompt",
-      },
-      {
-        label: "Track Status",
-        icon: "📡",
-        action: "Monitor this transaction on Sepolia explorer",
-        description: "Real-time confirmation",
-        kind: "prompt",
-      },
-      {
-        label: "Send Another",
-        icon: "📤",
-        action: "I want to send another transaction",
-        description: "Send ETH to another address",
-        kind: "send-form",
-      },
-    ],
     "balance-checked": [
       {
         label: "Send ETH",
@@ -167,17 +133,36 @@ function getChipsForPattern(
       {
         label: "Send to This",
         icon: "📮",
-        action: "I want to send ETH to this address",
+        action: extractedAddress
+          ? `I want to send ETH to ${extractedAddress}`
+          : "I want to send ETH to this address",
         description: "Transfer to resolved address",
         kind: "send-form",
         initialAddress: extractedAddress,
       },
       {
-        label: "Save as Alias",
-        icon: "⭐",
-        action: "Save this address for later use",
-        description: "Add to address book",
+        label: "Estimate Gas",
+        icon: "⛽",
+        action: "Estimate gas to send to this address",
+        description: "Gas fee calculation",
+        kind: "gas-form",
+        initialAddress: extractedAddress,
+      },
+    ],
+    "price-checked": [
+      {
+        label: "Check Balance",
+        icon: "💰",
+        action: "What's my current balance?",
+        description: "Refresh wallet balance",
         kind: "prompt",
+      },
+      {
+        label: "Send ETH",
+        icon: "💸",
+        action: "I want to send some ETH",
+        description: "Transfer ETH to another wallet",
+        kind: "send-form",
       },
     ],
   };
@@ -186,20 +171,18 @@ function getChipsForPattern(
 }
 
 export function ContextualChips({
+  tools,
   messageText,
   onChipClick,
   disabled = false,
 }: ContextualChipsProps) {
-  const extractedAddress = useMemo(
-    () => extractAddress(messageText),
-    [messageText],
-  );
-
   const chips = useMemo(() => {
-    const pattern = detectResponsePattern(messageText);
-    if (!pattern) return [];
-    return getChipsForPattern(pattern, extractedAddress);
-  }, [messageText, extractedAddress]);
+    const tool = lastRelevantTool(tools);
+    if (!tool) return [];
+    const pattern = TOOL_TO_PATTERN[tool.name];
+    const address = resolveAddress(tool, messageText);
+    return getChipsForPattern(pattern, address);
+  }, [tools, messageText]);
 
   if (chips.length === 0) {
     return null;

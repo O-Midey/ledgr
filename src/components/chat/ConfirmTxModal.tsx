@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useAccount, useSendTransaction, useSwitchChain } from "wagmi";
 import { sepolia } from "viem/chains";
 import { parseEther } from "viem";
@@ -56,7 +56,7 @@ export function ConfirmTxModal({
 }: Props) {
   const { chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
-  const { getCurrentSpend, checkCanSpend } = useSpendBudget();
+  const { getCurrentSpend, checkCanSpend, recordSpend } = useSpendBudget();
   const [error, setError] = useState<string | null>(null);
   const [submittedHash, setSubmittedHash] = useState<
     `0x${string}` | undefined
@@ -70,6 +70,44 @@ export function ConfirmTxModal({
     isPending: isSigning,
     error: sendError,
   } = useSendTransaction();
+
+  const cardRef = useRef<HTMLDivElement>(null);
+  const confirmBtnRef = useRef<HTMLButtonElement>(null);
+
+  // Move focus into the dialog on open and restore it to the trigger on close.
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    confirmBtnRef.current?.focus();
+    return () => previouslyFocused?.focus?.();
+  }, []);
+
+  // Escape-to-close (while idle) and a Tab focus-trap so keyboard users can't
+  // tab out of a money-moving dialog.
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isSigning) {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const focusables = cardRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusables || focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [isSigning, onClose]);
 
   const handleConfirm = useCallback(async () => {
     setError(null);
@@ -102,6 +140,9 @@ export function ConfirmTxModal({
       });
       setSubmittedHash(hash);
       setPhase("submitted");
+      // Record the spend against the client budget. Deduped by idempotencyKey,
+      // so a reload or re-confirm of the same proposal can't double-count.
+      recordSpend(amount, { hash, idempotencyKey: proposal.idempotencyKey });
       onSubmitted(hash, proposal);
       onClose();
     } catch (err) {
@@ -117,6 +158,7 @@ export function ConfirmTxModal({
     onSubmitted,
     onLifecycleChange,
     checkCanSpend,
+    recordSpend,
   ]);
 
   const displayError = error ?? (sendError ? sendError.message : null);
@@ -145,7 +187,7 @@ export function ConfirmTxModal({
       aria-modal
       aria-labelledby="tx-modal-title"
     >
-      <div className="tx-modal-card">
+      <div className="tx-modal-card" ref={cardRef}>
         <h3 id="tx-modal-title" className="tx-modal-title">
           Confirm transaction
         </h3>
@@ -230,6 +272,8 @@ export function ConfirmTxModal({
           </button>
           <button
             type="button"
+            id="tx-confirm-btn"
+            ref={confirmBtnRef}
             className="btn-primary"
             onClick={handleConfirm}
             disabled={!canConfirm}

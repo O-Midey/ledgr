@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { HeroSection } from "@/components/landing/HeroSection";
 import { FeaturesSection } from "@/components/landing/FeaturesSection";
 import { ArchitectureSection } from "@/components/landing/ArchitectureSection";
@@ -8,8 +9,9 @@ import { CtaSection } from "@/components/landing/CtaSection";
 import { LandingNav } from "@/components/landing/LandingNav";
 
 export default function Home() {
+  const router = useRouter();
   const handleOpenWorkspace = () => {
-    window.open("/workspace", "_blank", "noopener,noreferrer");
+    router.push("/workspace");
   };
 
   return (

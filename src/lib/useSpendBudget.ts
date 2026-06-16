@@ -201,6 +201,15 @@ export function useSpendBudget(limits: Partial<SpendLimits> = {}) {
         idempotencyKey?: string;
       },
     ): boolean => {
+      // Dedupe by idempotency key: a reload or re-confirm of the same proposal
+      // must never double-count against the budget.
+      if (
+        opts?.idempotencyKey &&
+        spendLog.some((e) => e.idempotencyKey === opts.idempotencyKey)
+      ) {
+        return true;
+      }
+
       const { allowed } = checkCanSpend(amount);
       if (!allowed) return false;
 
@@ -211,10 +220,27 @@ export function useSpendBudget(limits: Partial<SpendLimits> = {}) {
         idempotencyKey: opts?.idempotencyKey,
       };
 
-      setSpendLog((prev) => [...prev, entry]);
+      setSpendLog((prev) => {
+        // Race-safe dedupe against the latest state inside the updater.
+        if (
+          opts?.idempotencyKey &&
+          prev.some((e) => e.idempotencyKey === opts.idempotencyKey)
+        ) {
+          return prev;
+        }
+        const next = [...prev, entry];
+        // Persist synchronously — the caller (ConfirmTxModal) unmounts
+        // immediately after recording, before the persist effect can run.
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // Ignore storage errors
+        }
+        return next;
+      });
       return true;
     },
-    [checkCanSpend],
+    [checkCanSpend, spendLog],
   );
 
   const resetSession = useCallback((): void => {
