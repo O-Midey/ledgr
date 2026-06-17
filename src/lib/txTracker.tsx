@@ -26,6 +26,8 @@ export type TrackedTx = TxPreviewStatus & { sessionId: string };
 export interface TxNotice {
   id: string;
   sessionId: string;
+  /** The proposal this receipt settles — used to resolve its tool call. */
+  idempotencyKey: string;
   status: "confirmed" | "failed" | "reverted";
   hash: `0x${string}`;
   to: string;
@@ -145,6 +147,12 @@ export interface TxTrackerValue {
   track(input: TrackInput): void;
   /** Mark a proposal as awaiting wallet signature (before a hash exists). */
   setSignatureRequested(input: SignatureInput): void;
+  /**
+   * Drop a proposal that never reached the chain (wallet reject, sign error,
+   * or explicit cancel). Only clears entries WITHOUT a hash — a broadcast tx is
+   * never untracked, so an in-flight transaction can't be lost.
+   */
+  clearPending(idempotencyKey: string): void;
   /** In-flight/terminal status for one proposal — drives the inline preview. */
   statusForKey(idempotencyKey: string): TxPreviewStatus | null;
   /** All statuses initiated by a conversation. */
@@ -307,12 +315,23 @@ function AccountTxTracker({
   }, [hasConfirming]);
 
   const appendNotice = useCallback(
-    (tx: TrackedTx, notice: Omit<TxNotice, "sessionId" | "createdAt">) => {
+    (
+      tx: TrackedTx,
+      notice: Omit<
+        TxNotice,
+        "sessionId" | "createdAt" | "idempotencyKey"
+      >,
+    ) => {
       if (notifiedRef.current.has(tx.hash ?? notice.id)) return;
       notifiedRef.current.add(tx.hash ?? notice.id);
       setNotices((prev) => [
         ...prev,
-        { ...notice, sessionId: tx.sessionId, createdAt: Date.now() },
+        {
+          ...notice,
+          sessionId: tx.sessionId,
+          idempotencyKey: tx.idempotencyKey,
+          createdAt: Date.now(),
+        },
       ]);
     },
     [],
@@ -404,6 +423,12 @@ function AccountTxTracker({
     });
   }, []);
 
+  const clearPending = useCallback((idempotencyKey: string) => {
+    setStatuses((prev) =>
+      prev.filter((t) => !(t.idempotencyKey === idempotencyKey && !t.hash)),
+    );
+  }, []);
+
   const setSignatureRequested = useCallback((input: SignatureInput) => {
     const sig: TrackedTx = {
       ...input,
@@ -428,14 +453,18 @@ function AccountTxTracker({
     () => ({
       track,
       setSignatureRequested,
+      clearPending,
       statusForKey: (key) =>
         statuses.find((t) => t.idempotencyKey === key) ?? null,
       statusesForSession: (sid) => statuses.filter((t) => t.sessionId === sid),
       noticesForSession: (sid) => notices.filter((n) => n.sessionId === sid),
       isTracked: (key) => statuses.some((t) => t.idempotencyKey === key),
-      pendingCount: statuses.filter((t) => !isTerminal(t)).length,
+      // Only count transactions actually broadcast (have a hash) and not yet
+      // settled — a tx merely awaiting signature isn't "confirming", and this
+      // makes the indicator immune to a stranded signature-request entry.
+      pendingCount: statuses.filter((t) => !isTerminal(t) && !!t.hash).length,
     }),
-    [statuses, notices, track, setSignatureRequested],
+    [statuses, notices, track, setSignatureRequested, clearPending],
   );
 
   return (

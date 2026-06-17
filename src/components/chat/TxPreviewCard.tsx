@@ -1,7 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { isTxProposalOutput, isCancelledProposalOutput } from "@/lib/txProposal";
+import {
+  isTxProposalOutput,
+  isCancelledProposalOutput,
+  isSettledProposalOutput,
+} from "@/lib/txProposal";
 
 export interface ToolUIPart {
   type: string;
@@ -123,6 +127,51 @@ export function TxPreviewCard({
       );
     }
 
+    if (isDone && isSettledProposalOutput(output)) {
+      const p = output.proposal;
+      const confirmed = output.status === "confirmed";
+      const reverted = output.status === "reverted";
+      return (
+        <div
+          className={`tx-preview chat-tx-preview ${confirmed ? "tx-state-confirmed" : "tx-state-failed"}`}
+        >
+          <div className="tx-preview-label">
+            {confirmed
+              ? "Transaction confirmed"
+              : reverted
+                ? "Transaction reverted"
+                : "Confirmation unverified"}
+          </div>
+          <div className="tx-row">
+            <span className="tx-label">To</span>
+            <span className="tx-value">{truncateAddr(p.to)}</span>
+          </div>
+          <div className="tx-row">
+            <span className="tx-label">Amount</span>
+            <span className="tx-value accent">{p.valueEth} ETH</span>
+          </div>
+          <div className="tx-row">
+            <span className="tx-label">Hash</span>
+            <a
+              href={`https://sepolia.etherscan.io/tx/${output.hash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="tx-value accent"
+            >
+              {truncateAddr(output.hash)}
+            </a>
+          </div>
+          <div className={`tx-preview-status ${confirmed ? "done" : "error"}`}>
+            {confirmed
+              ? "Finalized on Sepolia"
+              : reverted
+                ? "Reverted on Sepolia — nothing was transferred"
+                : "Still pending on-chain. Open explorer for live status"}
+          </div>
+        </div>
+      );
+    }
+
     if (isDone && isTxProposalOutput(output)) {
       const p = output.proposal;
       const matchingStatus =
@@ -153,8 +202,19 @@ export function TxPreviewCard({
             ? "error"
             : "running";
 
+      // Tint the whole card to match its lifecycle so state is readable at a
+      // glance: teal while live, green on success, red on failure.
+      const cardStateClass = !matchingStatus
+        ? ""
+        : matchingStatus.phase === "confirmed"
+          ? "tx-state-confirmed"
+          : matchingStatus.phase === "reverted" ||
+              matchingStatus.phase === "failed"
+            ? "tx-state-failed"
+            : "tx-state-active";
+
       return (
-        <div className="tx-preview chat-tx-preview">
+        <div className={`tx-preview chat-tx-preview ${cardStateClass}`}>
           <div className="tx-preview-label">Transaction preview</div>
           <div className="tx-row">
             <span className="tx-label">To</span>

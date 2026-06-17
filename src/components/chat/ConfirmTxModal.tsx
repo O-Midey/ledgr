@@ -23,6 +23,12 @@ interface Props {
     phase: "signature_requested",
     proposal: TxProposal,
   ) => void;
+  /**
+   * The wallet prompt was rejected or errored before the tx was broadcast.
+   * Lets the parent release any awaiting-signature tracking. The modal stays
+   * open with the error so the user can retry or cancel.
+   */
+  onSignAborted?: (proposal: TxProposal) => void;
 }
 
 function truncate(addr: string) {
@@ -61,6 +67,7 @@ export function ConfirmTxModal({
   onClose,
   onSubmitted,
   onLifecycleChange,
+  onSignAborted,
 }: Props) {
   const { chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
@@ -156,6 +163,9 @@ export function ConfirmTxModal({
     } catch (err) {
       setPhase("ready");
       setError(toFriendlyTxError(err));
+      // No hash was obtained, so the awaiting-signature tracking is stranded —
+      // let the parent release it. The modal stays open for retry or cancel.
+      onSignAborted?.(proposal);
     }
   }, [
     chainId,
@@ -165,6 +175,7 @@ export function ConfirmTxModal({
     onClose,
     onSubmitted,
     onLifecycleChange,
+    onSignAborted,
     checkCanSpend,
     recordSpend,
   ]);

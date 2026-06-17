@@ -64,17 +64,38 @@ export function writeActiveSessionId(id: string): void {
 }
 
 export function useConversations() {
-  const [conversations, setConversations] = useState<ConversationMeta[]>(() =>
-    loadConversations(),
-  );
-  const [activeId, setActiveId] = useState<string>(() => {
-    const existing = readActiveSessionId();
-    if (existing) return existing;
-    // Bootstrap first conversation
+  // Start from a deterministic, storage-free state so the server-rendered HTML
+  // and the first client render match. Reading localStorage (or calling
+  // generateId/Date.now) in the initializer would diverge between server and
+  // client and trip a hydration mismatch. The real state is loaded in the mount
+  // effect below, after hydration. `hydrated` lets callers hold off on
+  // rendering conversation-dependent UI until then.
+  const [conversations, setConversations] = useState<ConversationMeta[]>([]);
+  const [activeId, setActiveId] = useState<string>("");
+  const [hydrated, setHydrated] = useState(false);
+
+  // Load persisted conversations and resolve the active session once, on the
+  // client, after mount — bootstrapping a first conversation if none exist.
+  // This is the sanctioned "sync from an external system after hydration" use
+  // of setState-in-effect: it runs once and React batches the updates into a
+  // single render, so it doesn't cascade.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
     const list = loadConversations();
+    const existing = readActiveSessionId();
+
+    if (existing) {
+      setConversations(list);
+      setActiveId(existing);
+      setHydrated(true);
+      return;
+    }
     if (list.length > 0) {
       writeActiveSessionId(list[0].id);
-      return list[0].id;
+      setConversations(list);
+      setActiveId(list[0].id);
+      setHydrated(true);
+      return;
     }
     const id = generateId();
     const first: ConversationMeta = {
@@ -85,13 +106,18 @@ export function useConversations() {
     };
     saveConversations([first]);
     writeActiveSessionId(id);
-    return id;
-  });
+    setConversations([first]);
+    setActiveId(id);
+    setHydrated(true);
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
-  // Keep localStorage in sync whenever conversations change
+  // Keep localStorage in sync whenever conversations change — but not before
+  // hydration, or the initial empty state would clobber the persisted list.
   useEffect(() => {
+    if (!hydrated) return;
     saveConversations(conversations);
-  }, [conversations]);
+  }, [conversations, hydrated]);
 
   // Refs mirror the latest values so stable callbacks can read them without
   // being re-created on every conversation/active change.
@@ -209,6 +235,7 @@ export function useConversations() {
   }, []);
 
   return {
+    hydrated,
     conversations,
     activeId,
     createConversation,

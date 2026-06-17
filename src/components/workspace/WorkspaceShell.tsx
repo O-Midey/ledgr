@@ -35,6 +35,7 @@ export function WorkspaceShell() {
   const router = useRouter();
   const [convOpen, setConvOpen] = useState(false);
   const {
+    hydrated,
     conversations,
     activeId,
     createConversation,
@@ -173,17 +174,23 @@ export function WorkspaceShell() {
 
       <div className="chat-root-inner">
         <main className="chat-main">
-          {/* key forces a full remount when session changes — clean slate */}
-          <ChatInterface
-            key={activeId}
-            sessionId={activeId}
-            needsTitle={needsTitle}
-            onTitleStart={() => setGeneratingTitleId(activeId)}
-            onTitle={(title) => {
-              autoTitle(activeId, title);
-              setGeneratingTitleId((id) => (id === activeId ? null : id));
-            }}
-          />
+          {/* Hold off until conversations hydrate from storage so we never
+              mount the chat with an empty session id. key forces a full
+              remount when the session changes — clean slate. */}
+          {hydrated && activeId ? (
+            <ChatInterface
+              key={activeId}
+              sessionId={activeId}
+              needsTitle={needsTitle}
+              onTitleStart={() => setGeneratingTitleId(activeId)}
+              onTitle={(title) => {
+                autoTitle(activeId, title);
+                setGeneratingTitleId((id) => (id === activeId ? null : id));
+              }}
+            />
+          ) : (
+            <WorkspaceChatSkeleton />
+          )}
         </main>
       </div>
     </div>

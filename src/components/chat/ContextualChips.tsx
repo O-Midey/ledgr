@@ -2,7 +2,11 @@
 
 import React, { useMemo } from "react";
 
-export type SuggestionChipKind = "prompt" | "send-form" | "gas-form";
+export type SuggestionChipKind =
+  | "prompt"
+  | "send-form"
+  | "gas-form"
+  | "propose-send";
 
 export interface SuggestionChip {
   label: string;
@@ -123,8 +127,8 @@ function getChipsForPattern(
         label: "Proceed with Send",
         icon: "✓",
         action: "Go ahead and send the transaction with these fees",
-        description: "Confirm and broadcast",
-        kind: "send-form",
+        description: "Open the confirmation to sign",
+        kind: "propose-send",
         initialAddress: extractedAddress,
         initialAmount: extractedAmount,
       },
