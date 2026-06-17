@@ -20,7 +20,6 @@ import { useAddressBook } from "@/lib/useAddressBook";
 import {
   isTxProposalOutput,
   buildCancelledProposalOutput,
-  buildSettledProposalOutput,
   type TxProposal,
 } from "@/lib/txProposal";
 import { formatAuditForSidebar } from "@/audit/sessionStore";
@@ -267,17 +266,6 @@ interface QuickActionDraft {
   initialAmount?: string;
 }
 
-/** A single entry in the merged chat stream: either a message or a tx receipt. */
-type TimelineItem =
-  | {
-      kind: "message";
-      key: string;
-      time: number;
-      message: UIMessage;
-      index: number;
-    }
-  | { kind: "notice"; key: string; time: number; notice: TxNotice };
-
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function ChatInterface({
@@ -381,9 +369,6 @@ export function ChatInterface({
   }, []);
   const [quickActionDraft, setQuickActionDraft] =
     useState<QuickActionDraft | null>(null);
-  // Direct-propose flow (skips the LLM round-trip for a known recipient+amount).
-  const [isProposing, setIsProposing] = useState(false);
-  const [proposeError, setProposeError] = useState<string | null>(null);
   const titleRequestedRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -500,79 +485,8 @@ export function ChatInterface({
     [isWrongNetwork, isLoading, sendMessage, address, aliases],
   );
 
-  // Build a send proposal directly (no LLM turn) when the recipient + amount are
-  // already known, then inject it as a normal `sendTransaction` tool result so
-  // the confirm modal, inline preview, tracking, and cancel all work unchanged.
-  const proposeSend = useCallback(
-    async (to: string, valueEth: string) => {
-      if (isWrongNetwork || !address || isProposing) return;
-      setProposeError(null);
-      setIsProposing(true);
-      try {
-        const idempotencyKey = `qa-${generateId()}`;
-        const res = await fetch("/api/tx/propose", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-session-id": sessionId,
-            "x-wallet-address": address,
-          },
-          body: JSON.stringify({
-            to,
-            valueEth,
-            idempotencyKey,
-            connectedAddress: address,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data?.proposal) {
-          setProposeError(
-            typeof data?.error === "string"
-              ? data.error
-              : "Couldn't prepare the transaction. Try again.",
-          );
-          return;
-        }
-        const part = {
-          type: "tool-sendTransaction",
-          toolCallId: `qa-call-${generateId()}`,
-          state: "output-available",
-          input: { to, value: Number(valueEth), idempotencyKey },
-          output: data,
-        };
-        setMessages(
-          (prev) =>
-            [
-              ...prev,
-              { id: generateId(), role: "assistant", parts: [part] },
-            ] as typeof prev,
-        );
-      } catch {
-        setProposeError("Network error preparing the transaction. Try again.");
-      } finally {
-        setIsProposing(false);
-      }
-    },
-    [isWrongNetwork, address, isProposing, sessionId, setMessages],
-  );
-
   const handleContextualChip = useCallback(
     (chip: SuggestionChip) => {
-      if (chip.kind === "propose-send") {
-        // We already know recipient + amount — go straight to the modal. Fall
-        // back to the pre-filled form only if something's missing.
-        if (chip.initialAddress && chip.initialAmount) {
-          void proposeSend(chip.initialAddress, chip.initialAmount);
-        } else {
-          setQuickActionDraft({
-            mode: "send",
-            initialAddress: chip.initialAddress,
-            initialAmount: chip.initialAmount,
-          });
-        }
-        return;
-      }
-
       if (chip.kind === "send-form") {
         setQuickActionDraft({
           mode: "send",
@@ -593,7 +507,7 @@ export function ChatInterface({
 
       void submitPrompt(chip.action);
     },
-    [submitPrompt, proposeSend],
+    [submitPrompt],
   );
 
   const handleSubmit = useCallback(
@@ -724,52 +638,6 @@ export function ChatInterface({
     prevNoticeCountRef.current = sessionNotices.length;
   }, [sessionNotices.length, refreshAudit]);
 
-  // Resolve a settled transaction's tool call in the message history. The
-  // `sendTransaction` result lands as `pendingConfirmation: true` and never
-  // changes on its own, so on the next turn the model still sees an
-  // awaiting-confirmation proposal and insists it has "already initiated" the
-  // transfer. When the account tracker emits a receipt for this chat, rewrite
-  // the matching tool output to its settled state (same pattern the cancel flow
-  // uses) so the model sees the outcome — and so a reload renders the resolved
-  // card instead of a frozen "awaiting confirmation" preview.
-  useEffect(() => {
-    if (sessionNotices.length === 0) return;
-    const settlementByKey = new Map<string, TxNotice>();
-    for (const notice of sessionNotices) {
-      if (notice.idempotencyKey) settlementByKey.set(notice.idempotencyKey, notice);
-    }
-    if (settlementByKey.size === 0) return;
-
-    setMessages((prev) => {
-      let changed = false;
-      const next = prev.map((m) => {
-        if (m.role !== "assistant") return m;
-        let msgChanged = false;
-        const parts = m.parts.map((part) => {
-          if (!isPendingSendTxPart(part)) return part;
-          const notice = settlementByKey.get(part.output.proposal.idempotencyKey);
-          if (!notice) return part;
-          msgChanged = true;
-          changed = true;
-          return {
-            ...part,
-            output: buildSettledProposalOutput(part.output.proposal, {
-              status: notice.status,
-              hash: notice.hash,
-              blockNumber: notice.blockNumber,
-              txFeeEth: notice.txFeeEth,
-            }),
-          };
-        });
-        return msgChanged ? { ...m, parts } : m;
-      });
-      return changed ? next : prev;
-    });
-    // `messages` is included so a settlement still reconciles when history
-    // hydrates after the receipt is already known (e.g. server-side hydration).
-    // setMessages returns `prev` unchanged once rewritten, so this can't loop.
-  }, [sessionNotices, messages, setMessages]);
-
   // Persist handled (confirmed/dismissed) proposal keys so a reload can't
   // re-surface an already-signed proposal and allow a double-send.
   useEffect(() => {
@@ -840,13 +708,9 @@ export function ChatInterface({
   const pendingProposal = useMemo(() => {
     const proposal = findPendingProposal(messages, dismissedProposals);
     if (!proposal) return null;
-    // Keep the modal mounted while the proposal is merely awaiting signature —
-    // it drives the wallet prompt and must stay to handle a reject or submit.
-    // Suppress re-opening only once the tx has actually been broadcast (or is
-    // settling/terminal), which guards against a re-render triggering a
-    // double-send. A reject leaves no tracked status, so the modal persists.
-    const status = tracker.statusForKey(proposal.idempotencyKey);
-    if (status && status.phase !== "signature_requested") {
+    // A transaction for this proposal is already being tracked — don't re-open
+    // the confirmation modal (guards against double-send on re-render).
+    if (tracker.isTracked(proposal.idempotencyKey)) {
       return null;
     }
     return proposal;
@@ -866,32 +730,6 @@ export function ChatInterface({
   }, [isLoading, isWrongNetwork, pendingProposal]);
 
   const hasMessages = messages.length > 0;
-
-  // Interleave completion receipts into the message stream by time, rather than
-  // pinning them all after the last message. A receipt then sits at the moment
-  // it confirmed and scrolls away naturally as the conversation continues,
-  // instead of staying stuck to the bottom with new turns stacking above it.
-  const timeline = useMemo<TimelineItem[]>(() => {
-    const items: TimelineItem[] = messages.map((message, index) => ({
-      kind: "message",
-      key: message.id,
-      time: messageTimeFor(message.id),
-      message,
-      index,
-    }));
-    for (const notice of sessionNotices) {
-      items.push({
-        kind: "notice",
-        key: notice.id,
-        time: notice.createdAt ?? messageTimeFor(notice.id),
-        notice,
-      });
-    }
-    // Array.prototype.sort is stable, so equal timestamps keep insertion order
-    // (messages before notices) — a notice created in the same ms as a message
-    // logically follows it.
-    return items.sort((a, b) => a.time - b.time);
-  }, [messages, sessionNotices, messageTimeFor]);
 
   const txLiveAnnouncement = useMemo(() => {
     const notices = tracker.noticesForSession(sessionId);
@@ -985,21 +823,8 @@ export function ChatInterface({
         }),
       );
       setDismissedProposals((s) => new Set(s).add(proposal.idempotencyKey));
-      // Drop any awaiting-signature tracking so the proposal doesn't linger as a
-      // phantom in-flight tx (no-op if it was never signature-requested).
-      tracker.clearPending(proposal.idempotencyKey);
     },
-    [setMessages, tracker],
-  );
-
-  // The wallet prompt was rejected or errored before broadcast — release the
-  // awaiting-signature tracking so it doesn't strand as a phantom pending tx.
-  // The modal stays open showing the error so the user can retry or cancel.
-  const handleSignAborted = useCallback(
-    (proposal: TxProposal) => {
-      tracker.clearPending(proposal.idempotencyKey);
-    },
-    [tracker],
+    [setMessages],
   );
 
   return (
@@ -1071,22 +896,8 @@ export function ChatInterface({
             </div>
           )}
 
-          {/* Messages + completion receipts, merged in chronological order */}
-          {timeline.map((item) => {
-            if (item.kind === "notice") {
-              const notice = item.notice;
-              return (
-                <div key={notice.id} className="msg-row assistant">
-                  <TxCompletionNotice notice={notice} />
-                  <div className="msg-timestamp">
-                    {formatTime(new Date(item.time))}
-                  </div>
-                </div>
-              );
-            }
-
-            const m = item.message;
-            const idx = item.index;
+          {/* Messages */}
+          {messages.map((m, idx) => {
             const isLastAssistant =
               m.role === "assistant" && idx === messages.length - 1;
             const textContent = m.parts
@@ -1199,7 +1010,7 @@ export function ChatInterface({
                       tools={executedTools}
                       messageText={textContent}
                       onChipClick={handleContextualChip}
-                      disabled={isWrongNetwork || isProposing}
+                      disabled={isWrongNetwork}
                     />
                   )}
                 </div>
@@ -1209,6 +1020,17 @@ export function ChatInterface({
               </div>
             );
           })}
+
+          {sessionNotices.map((notice) => (
+            <div key={notice.id} className="msg-row assistant">
+              <TxCompletionNotice notice={notice} />
+              <div className="msg-timestamp">
+                {formatTime(
+                  new Date(notice.createdAt ?? messageTimeFor(notice.id)),
+                )}
+              </div>
+            </div>
+          ))}
 
           {/* Thinking dots */}
           {showThinking && (
@@ -1280,19 +1102,6 @@ export function ChatInterface({
               </div>
             )}
 
-            {isProposing && (
-              <div className="propose-status" role="status" aria-live="polite">
-                <span className="propose-spinner" aria-hidden="true" />
-                Preparing transaction…
-              </div>
-            )}
-
-            {proposeError && (
-              <div className="propose-error" role="alert">
-                {proposeError}
-              </div>
-            )}
-
             {quickActionDraft && (
               <QuickActionCard
                 mode={quickActionDraft.mode}
@@ -1328,7 +1137,11 @@ export function ChatInterface({
                     type="button"
                     className="suggestion-chip"
                     disabled={isLoading}
-                    onClick={() => handleCancelProposal(pendingProposal)}
+                    onClick={() =>
+                      setDismissedProposals((s) =>
+                        new Set(s).add(pendingProposal.idempotencyKey),
+                      )
+                    }
                   >
                     ✕ Cancel
                   </button>
@@ -1526,7 +1339,6 @@ export function ChatInterface({
           }
           onSubmitted={handleTxSubmitted}
           onLifecycleChange={handleTxLifecycleChange}
-          onSignAborted={handleSignAborted}
         />
       )}
     </div>
