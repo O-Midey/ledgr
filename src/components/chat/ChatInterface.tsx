@@ -374,6 +374,7 @@ export function ChatInterface({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isNearBottomRef = useRef(true);
   const lastMessageCountRef = useRef(0);
+  const wasLoadingRef = useRef(false);
 
   const isLoading = status === "streaming" || status === "submitted";
   const isStreaming = status === "streaming";
@@ -714,6 +715,19 @@ export function ChatInterface({
     }
     return proposal;
   }, [messages, dismissedProposals, tracker]);
+
+  // ── Return focus to the composer when a response finishes ──
+  // The textarea is disabled while the assistant streams, which drops focus.
+  // On the loading→idle transition we refocus so the user can reply without
+  // clicking — but not when a tx proposal just landed, since the confirm modal
+  // owns focus then and stealing it would break its focus-trap.
+  useEffect(() => {
+    const finished = wasLoadingRef.current && !isLoading;
+    wasLoadingRef.current = isLoading;
+    if (finished && !isWrongNetwork && !pendingProposal) {
+      textareaRef.current?.focus();
+    }
+  }, [isLoading, isWrongNetwork, pendingProposal]);
 
   const hasMessages = messages.length > 0;
 
