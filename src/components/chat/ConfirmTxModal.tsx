@@ -10,6 +10,13 @@ import { SpendBudgetDashboard } from "./SpendBudgetDashboard";
 
 interface Props {
   proposal: TxProposal;
+  /**
+   * User dismissed the modal without sending — the proposal is cancelled.
+   * Distinct from `onClose`: this must NEVER fire after a successful submit,
+   * or a broadcast transaction would be marked "cancelled".
+   */
+  onCancel: () => void;
+  /** Tear down the modal after a successful submit. Carries no cancel meaning. */
   onClose: () => void;
   onSubmitted: (hash: `0x${string}`, proposal: TxProposal) => void;
   onLifecycleChange?: (
@@ -50,6 +57,7 @@ function toFriendlyTxError(err: unknown): string {
 
 export function ConfirmTxModal({
   proposal,
+  onCancel,
   onClose,
   onSubmitted,
   onLifecycleChange,
@@ -87,7 +95,7 @@ export function ConfirmTxModal({
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !isSigning) {
         e.preventDefault();
-        onClose();
+        onCancel();
         return;
       }
       if (e.key !== "Tab") return;
@@ -107,7 +115,7 @@ export function ConfirmTxModal({
     };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [isSigning, onClose]);
+  }, [isSigning, onCancel]);
 
   const handleConfirm = useCallback(async () => {
     setError(null);
@@ -264,7 +272,7 @@ export function ConfirmTxModal({
           <button
             type="button"
             className="btn-secondary"
-            onClick={onClose}
+            onClick={onCancel}
             disabled={isSigning}
             aria-disabled={isSigning}
           >

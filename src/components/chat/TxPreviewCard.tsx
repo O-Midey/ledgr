@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { isTxProposalOutput } from "@/lib/txProposal";
+import { isTxProposalOutput, isCancelledProposalOutput } from "@/lib/txProposal";
 
 export interface ToolUIPart {
   type: string;
@@ -103,6 +103,26 @@ export function TxPreviewCard({
   }
 
   if (name === "sendTransaction") {
+    if (isDone && isCancelledProposalOutput(output)) {
+      const p = output.proposal;
+      return (
+        <div className="tx-preview chat-tx-preview tx-cancelled">
+          <div className="tx-preview-label">Transaction cancelled</div>
+          <div className="tx-row">
+            <span className="tx-label">To</span>
+            <span className="tx-value">{truncateAddr(p.to)}</span>
+          </div>
+          <div className="tx-row">
+            <span className="tx-label">Amount</span>
+            <span className="tx-value">{p.valueEth} ETH</span>
+          </div>
+          <div className="tx-preview-status cancelled">
+            You cancelled this transaction — nothing was sent.
+          </div>
+        </div>
+      );
+    }
+
     if (isDone && isTxProposalOutput(output)) {
       const p = output.proposal;
       const matchingStatus =

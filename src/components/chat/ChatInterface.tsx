@@ -2,8 +2,14 @@
 
 import dynamic from "next/dynamic";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
-import type { UIMessage } from "ai";
+import { DefaultChatTransport, isToolUIPart, getToolName } from "ai";
+import type {
+  UIMessage,
+  UIMessagePart,
+  UIDataTypes,
+  UITools,
+  ToolUIPart as SdkToolUIPart,
+} from "ai";
 import { useChainId, useAccount as useWagmiAccount, useBalance } from "wagmi";
 import { sepolia } from "viem/chains";
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
@@ -11,7 +17,11 @@ import type { ToolUIPart } from "./TxPreviewCard";
 import type { SuggestionChip } from "./ContextualChips";
 import type { AddressAlias } from "@/lib/useAddressBook";
 import { useAddressBook } from "@/lib/useAddressBook";
-import { isTxProposalOutput, type TxProposal } from "@/lib/txProposal";
+import {
+  isTxProposalOutput,
+  buildCancelledProposalOutput,
+  type TxProposal,
+} from "@/lib/txProposal";
 import { formatAuditForSidebar } from "@/audit/sessionStore";
 import { generateId } from "@/lib/utils";
 import { requestChatTitle } from "@/lib/generateTitle";
@@ -66,18 +76,36 @@ const QuickActionCard = dynamic(
   },
 );
 
+/**
+ * A resolved `sendTransaction` tool part whose output is still an
+ * awaiting-confirmation proposal. The confirm modal, the inline preview, and
+ * the cancel handler all key off this exact shape, so the match lives here once.
+ */
+type PendingSendTxPart = SdkToolUIPart & {
+  state: "output-available";
+  output: { pendingConfirmation: true; proposal: TxProposal };
+};
+
+function isPendingSendTxPart(
+  part: UIMessagePart<UIDataTypes, UITools>,
+): part is PendingSendTxPart {
+  return (
+    isToolUIPart(part) &&
+    getToolName(part) === "sendTransaction" &&
+    part.state === "output-available" &&
+    isTxProposalOutput(part.output)
+  );
+}
+
 function findPendingProposal(
-  messages: { role: string; parts: unknown[] }[],
+  messages: UIMessage[],
   dismissed: Set<string>,
 ): TxProposal | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role !== "assistant") continue;
-    for (const p of m.parts) {
-      const part = p as { type?: string; state?: string; output?: unknown };
-      if (!part.type?.includes("sendTransaction")) continue;
-      if (part.state !== "output-available") continue;
-      if (!isTxProposalOutput(part.output)) continue;
+    for (const part of m.parts) {
+      if (!isPendingSendTxPart(part)) continue;
       const key = part.output.proposal.idempotencyKey;
       if (dismissed.has(key)) continue;
       return part.output.proposal;
@@ -755,6 +783,36 @@ export function ChatInterface({
     [tracker, sessionId],
   );
 
+  // Dismissing the confirmation modal cancels the proposal. We rewrite the
+  // tool output in place (rather than only suppressing the modal) so the inline
+  // preview can show a "cancelled" state and the model sees the resolution of
+  // its own tool call on the next turn instead of a perpetually-pending one.
+  // The dismissed-key set is still tracked for reload-time double-send safety.
+  const handleCancelProposal = useCallback(
+    (proposal: TxProposal) => {
+      const cancelledOutput = buildCancelledProposalOutput(proposal);
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.role !== "assistant") return m;
+          let changed = false;
+          const parts = m.parts.map((part) => {
+            if (
+              isPendingSendTxPart(part) &&
+              part.output.proposal.idempotencyKey === proposal.idempotencyKey
+            ) {
+              changed = true;
+              return { ...part, output: cancelledOutput };
+            }
+            return part;
+          });
+          return changed ? { ...m, parts } : m;
+        }),
+      );
+      setDismissedProposals((s) => new Set(s).add(proposal.idempotencyKey));
+    },
+    [setMessages],
+  );
+
   return (
     <div className="chat-body">
       <div
@@ -913,17 +971,8 @@ export function ChatInterface({
             // any) so the inline preview reflects live phase — tracking lives at
             // the account level now and survives conversation switches.
             const sendTxKey = (() => {
-              for (const p of m.parts) {
-                const part = p as {
-                  type?: string;
-                  state?: string;
-                  output?: unknown;
-                };
-                if (
-                  part.type?.includes("sendTransaction") &&
-                  part.state === "output-available" &&
-                  isTxProposalOutput(part.output)
-                ) {
+              for (const part of m.parts) {
+                if (isPendingSendTxPart(part)) {
                   return part.output.proposal.idempotencyKey;
                 }
               }
@@ -1268,6 +1317,7 @@ export function ChatInterface({
       {pendingProposal && !isWrongNetwork && (
         <ConfirmTxModal
           proposal={pendingProposal}
+          onCancel={() => handleCancelProposal(pendingProposal)}
           onClose={() =>
             setDismissedProposals((s) =>
               new Set(s).add(pendingProposal.idempotencyKey),

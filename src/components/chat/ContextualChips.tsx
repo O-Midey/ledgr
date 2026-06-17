@@ -59,6 +59,27 @@ function resolveAddress(tool: ExecutedTool, text: string): string | undefined {
   );
 }
 
+/**
+ * Pull the ETH amount out of a tool call so follow-up actions can carry it.
+ * The chat-layer `estimateGas` tool takes `value` (a number); the underlying
+ * tool uses `valueEth` (a string) — accept either so the send form pre-fills.
+ */
+function resolveAmount(tool: ExecutedTool): string | undefined {
+  if (tool.input && typeof tool.input === "object") {
+    const rec = tool.input as Record<string, unknown>;
+    if (
+      typeof rec.value === "number" &&
+      Number.isFinite(rec.value) &&
+      rec.value > 0
+    ) {
+      return String(rec.value);
+    }
+    const valueEth = readString(tool.input, "valueEth");
+    if (valueEth) return valueEth;
+  }
+  return undefined;
+}
+
 /** The last tool whose result has a meaningful follow-up. */
 function lastRelevantTool(tools: ExecutedTool[]): ExecutedTool | null {
   for (let i = tools.length - 1; i >= 0; i--) {
@@ -70,6 +91,7 @@ function lastRelevantTool(tools: ExecutedTool[]): ExecutedTool | null {
 function getChipsForPattern(
   pattern: string,
   extractedAddress?: string,
+  extractedAmount?: string,
 ): SuggestionChip[] {
   const chipMap: Record<string, SuggestionChip[]> = {
     "balance-checked": [
@@ -104,6 +126,7 @@ function getChipsForPattern(
         description: "Confirm and broadcast",
         kind: "send-form",
         initialAddress: extractedAddress,
+        initialAmount: extractedAmount,
       },
       {
         label: "Estimate Higher Amount",
@@ -181,7 +204,8 @@ export function ContextualChips({
     if (!tool) return [];
     const pattern = TOOL_TO_PATTERN[tool.name];
     const address = resolveAddress(tool, messageText);
-    return getChipsForPattern(pattern, address);
+    const amount = resolveAmount(tool);
+    return getChipsForPattern(pattern, address, amount);
   }, [tools, messageText]);
 
   if (chips.length === 0) {
